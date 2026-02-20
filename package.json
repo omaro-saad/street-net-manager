@@ -1,0 +1,80 @@
+{
+  "name": "street-net-manager",
+  "productName": "مدير شبكتك",
+  "private": true,
+  "version": "3.1.0",
+  "description": "مدير شبكتك",
+  "author": "oMaRo",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "lint": "eslint .",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently -k \"vite --port 5173 --strictPort\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "dist": "npm run build && electron-builder --win --x64",
+    "electron:build": "npm run dist",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.5.0",
+    "dagre": "^0.8.5",
+    "dist": "^0.1.2",
+    "node-machine-id": "^1.1.12",
+    "py": "^0.0.0",
+    "python": "^0.0.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-mentions": "^4.4.10",
+    "react-router-dom": "^7.10.1",
+    "reactflow": "^11.11.4",
+    "systeminformation": "^5.30.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^7.0.3",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.4.0",
+    "electron-rebuild": "^3.2.9",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "vite": "^7.2.4",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.alsalam.streetnetmanager",
+    "productName": "مدير شبكتك",
+    "artifactName": "مدير-شبكتك-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "Db/**",
+      "package.json",
+      "assets/Icon.ico"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "src/assets/Icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
