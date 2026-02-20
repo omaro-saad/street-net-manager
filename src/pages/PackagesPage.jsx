@@ -1,34 +1,14 @@
 // src/pages/PackagesPage.jsx
 import { useEffect, useMemo, useState } from "react";
 import { useData } from "../DataContext";
+import { safeArray, safeObj, nowMs, genId, fmtMoney } from "../utils/helpers.js";
+import { theme } from "../theme.js";
 
-const primary = "#8b5cf6";
-
-/* =========================
-   Helpers
-   ========================= */
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function safeObj(x) {
-  return x && typeof x === "object" ? x : {};
-}
-function nowMs() {
-  return Date.now();
-}
-function genId(prefix) {
-  return `${prefix}_${nowMs()}_${Math.floor(Math.random() * 100000)}`;
-}
 function toNum(x) {
   const s = String(x ?? "").trim().replace(",", ".");
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
-}
-function fmt(n) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return "—";
-  return x.toFixed(2);
 }
 
 /* =========================
@@ -650,9 +630,9 @@ export default function PackagesPage() {
                 ? x.type === "time"
                   ? [`⚡ السرعة: ${x.speed || "—"}`, `⏳ الصلاحية: ${validityLabel(x.timeValidityMode, x.timeValidityPreset, x.timeValidityDays)}`]
                   : [`⚡ السرعة: ${x.speed || "—"}`, `📉 الاستهلاك: ${x.usageText || "—"}`, `⏳ صلاحية أيام: ${x.usageValidityEnabled ? validityLabel(x.usageValidityMode, x.usageValidityPreset, x.usageValidityDays) : "بدون"}`]
-                : [`⚡ سرعة البطاقة: ${x.cardSpeed || "—"}`, `⏳ صلاحية البطاقة: ${x.cardValidity || "—"}`, `💰 سعر البطاقة: ${fmt(x.cardPrice)}`];
+                : [`⚡ سرعة البطاقة: ${x.cardSpeed || "—"}`, `⏳ صلاحية البطاقة: ${x.cardValidity || "—"}`, `💰 سعر البطاقة: ${fmtMoney(x.cardPrice)}`];
 
-              const priceLine = isSub ? `💰 السعر: ${fmt(x.price)}` : `💰 السعر: ${fmt(x.cardPrice)}`;
+              const priceLine = isSub ? `💰 السعر: ${fmtMoney(x.price)}` : `💰 السعر: ${fmtMoney(x.cardPrice)}`;
 
               return (
                 <div key={x.id} style={card}>
@@ -956,7 +936,7 @@ const tabBtn = (active) => ({
   padding: "10px 14px",
   borderRadius: 999,
   border: active ? "none" : "1px solid #e5e7eb",
-  background: active ? primary : "#fff",
+  background: active ? theme.primary : "#fff",
   color: active ? "#fff" : "#111827",
   fontWeight: 900,
   cursor: "pointer",
@@ -966,8 +946,8 @@ const tabBtn = (active) => ({
 const tabBtnSpecial = (active) => ({
   padding: "10px 14px",
   borderRadius: 999,
-  border: active ? "none" : `1px solid ${primary}`,
-  background: active ? primary : "#f5f3ff",
+  border: active ? "none" : `1px solid ${theme.primary}`,
+  background: active ? theme.primary : "#f5f3ff",
   color: active ? "#fff" : "#4c1d95",
   fontWeight: 900,
   cursor: "pointer",
@@ -992,7 +972,7 @@ const chip2 = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7
 const chipPending = { padding: "6px 10px", borderRadius: 999, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", fontWeight: 900, fontSize: 12 };
 const chipApproved = { padding: "6px 10px", borderRadius: 999, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#065f46", fontWeight: 900, fontSize: 12 };
 
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
+const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
 const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnTiny = { padding: "8px 12px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnGhost = { padding: "10px 16px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
@@ -1036,7 +1016,7 @@ const segBtn = (active) => ({
   padding: "10px 12px",
   borderRadius: 14,
   border: active ? "none" : "1px solid #e5e7eb",
-  background: active ? primary : "#fff",
+  background: active ? theme.primary : "#fff",
   color: active ? "#fff" : "#111827",
   fontWeight: 900,
   cursor: "pointer",
@@ -1048,7 +1028,7 @@ const segBtnSmall = (active) => ({
   padding: "9px 12px",
   borderRadius: 14,
   border: active ? "none" : "1px solid #e5e7eb",
-  background: active ? primary : "#fff",
+  background: active ? theme.primary : "#fff",
   color: active ? "#fff" : "#111827",
   fontWeight: 900,
   cursor: "pointer",

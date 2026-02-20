@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import BottomNav from "./components/BottomNav";
 import SplashScreen from "./components/SplashScreen";
+import { ROUTES } from "./config/routes";
 
 import HomePage from "./pages/HomePage";
 import SubscribersPage from "./pages/SubscribersPage";
@@ -146,16 +147,16 @@ function AppInner() {
   // ✅ helper: redirect logic
   const goToActivation = (replace = true) => {
     // خزّن آخر مكان (لو مش /activate)
-    if (location.pathname && location.pathname !== "/activate") {
+    if (location.pathname && location.pathname !== ROUTES.ACTIVATE) {
       lastWantedPathRef.current = location.pathname;
     }
-    navigate("/activate", { replace });
+    navigate(ROUTES.ACTIVATE, { replace });
   };
 
   const goToAppAfterActivation = () => {
     const target = lastWantedPathRef.current || "/";
     // لو target هو /activate بالغلط، ارجع للـ home
-    const safeTarget = target === "/activate" ? "/" : target;
+    const safeTarget = target === ROUTES.ACTIVATE ? ROUTES.HOME : target;
     navigate(safeTarget, { replace: true });
   };
 
@@ -188,7 +189,7 @@ function AppInner() {
           goToActivation(true);
         } else {
           // لو كان واقف على /activate (مثلاً بعد Restart) رجعه للتطبيق
-          if (location.pathname === "/activate") goToAppAfterActivation();
+          if (location.pathname === ROUTES.ACTIVATE) goToAppAfterActivation();
         }
       } catch {
         if (!alive) return;
@@ -218,7 +219,7 @@ function AppInner() {
 
         if (ok) {
           // ✅ أهم سطر: بعد التفعيل رجّعه للتطبيق
-          if (location.pathname === "/activate") goToAppAfterActivation();
+          if (location.pathname === ROUTES.ACTIVATE) goToAppAfterActivation();
         } else {
           goToActivation(true);
         }
@@ -248,7 +249,7 @@ function AppInner() {
     return (
       <div style={{ minHeight: "100vh" }}>
         <Routes>
-          <Route path="/activate" element={<ActivationPage />} />
+          <Route path={ROUTES.ACTIVATE} element={<ActivationPage />} />
           <Route path="*" element={<ActivationPage />} />
         </Routes>
       </div>
@@ -297,18 +298,17 @@ function AppInner() {
         }}
       >
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/subscribers" element={<SubscribersPage />} />
-          <Route path="/distributors" element={<DistributorsPage />} />
-          <Route path="/plans" element={<PlansPage />} />
-          <Route path="/map" element={<MyMapPage />} />
-          <Route path="/packages" element={<PackagesPage />} />
-          <Route path="/devices" element={<DevicesPage />} />
-          <Route path="/employee" element={<EmployeesPage />} />
-          <Route path="/finance" element={<FinancePage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          {/* نخليها موجودة عادي، بس مش هي اللي بتتحكم */}
-          <Route path="/activate" element={<ActivationPage />} />
+          <Route path={ROUTES.HOME} element={<HomePage />} />
+          <Route path={ROUTES.SUBSCRIBERS} element={<SubscribersPage />} />
+          <Route path={ROUTES.DISTRIBUTORS} element={<DistributorsPage />} />
+          <Route path={ROUTES.PLANS} element={<PlansPage />} />
+          <Route path={ROUTES.MAP} element={<MyMapPage />} />
+          <Route path={ROUTES.PACKAGES} element={<PackagesPage />} />
+          <Route path={ROUTES.DEVICES} element={<DevicesPage />} />
+          <Route path={ROUTES.EMPLOYEE} element={<EmployeesPage />} />
+          <Route path={ROUTES.FINANCE} element={<FinancePage />} />
+          <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
+          <Route path={ROUTES.ACTIVATE} element={<ActivationPage />} />
         </Routes>
       </div>
 
@@ -319,7 +319,7 @@ function AppInner() {
         onClose={() => setTrialPayload(null)}
         onActivate={() => {
           setTrialPayload(null);
-          navigate("/activate");
+          navigate(ROUTES.ACTIVATE);
         }}
       />
     </div>

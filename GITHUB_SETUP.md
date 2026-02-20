@@ -14,25 +14,20 @@ Download and install from: https://git-scm.com/download/win
 
 ## Step 3: Push Your Code
 
-Open PowerShell or Command Prompt in the project folder and run:
+**Done:** `git init`, `git add .`, `git commit`, `git branch -M main` ✓
 
-```bash
+**You need to do:**
+
+1. Create a new **private** repo at https://github.com/new (name it `street-net-manager` or your choice)
+2. Open PowerShell in the project folder and run:
+
+```powershell
 cd "c:\Users\omar9\Desktop\Al-Salam App - Copy\street-net-manager"
 
-# Initialize git
-git init
-
-# Add all files (respects .gitignore)
-git add .
-
-# First commit
-git commit -m "Initial commit: Street Net Manager"
-
-# Add your GitHub repo as remote (replace YOUR_USERNAME and YOUR_REPO with your actual values)
+# Add your GitHub repo (replace YOUR_USERNAME and YOUR_REPO with your values)
 git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
 
 # Push to GitHub
-git branch -M main
 git push -u origin main
 ```
 

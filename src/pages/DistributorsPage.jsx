@@ -1,48 +1,21 @@
 // src/pages/DistributorsPage.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useData } from "../DataContext";
+import {
+  safeArray,
+  safeObj,
+  nowMs,
+  genId,
+  toLocalISODate,
+  todayISO,
+  normId,
+  clampMoney,
+  toNum,
+} from "../utils/helpers.js";
+import { normalizeLineRow } from "../utils/lineShape.js";
+import { useResponsive } from "../hooks/useResponsive.js";
+import { theme } from "../theme.js";
 
-const primary = "#6366f1";
-
-/* ========================= Helpers ========================= */
-function nowMs() {
-  return Date.now();
-}
-function genId(prefix) {
-  return `${prefix}_${nowMs()}_${Math.floor(Math.random() * 100000)}`;
-}
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function safeObj(x) {
-  return x && typeof x === "object" && !Array.isArray(x) ? x : {};
-}
-function normId(x) {
-  return String(x ?? "").trim();
-}
-function toNum(x) {
-  const s = String(x ?? "").trim().replace(",", ".");
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
-function clampMoney(x) {
-  const n = Number(x);
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, n);
-}
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
-function toLocalISODate(ms) {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-function todayISO() {
-  return toLocalISODate(Date.now());
-}
-
-/* ========================= Normalizers ========================= */
 function normalizeDistributorRow(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const id = normId(raw.id);
@@ -59,19 +32,6 @@ function normalizeDistributorRow(raw) {
     lineName: String(raw.lineName ?? "").trim(),
     createdAt: Number(raw.createdAt) || 0,
     updatedAt: Number(raw.updatedAt) || 0,
-  };
-}
-
-function normalizeLineRow(raw) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const id = normId(raw.id);
-  if (!id) return null;
-  return {
-    ...raw,
-    id,
-    name: String(raw.name ?? "").trim() || `Line ${id}`,
-    address: String(raw.address ?? "").trim(),
-    active: raw.active === 0 ? false : Boolean(raw.active ?? true),
   };
 }
 
@@ -186,19 +146,7 @@ export default function DistributorsPage() {
     data?.finance?.pricing?.defaultCurrency ||
     "₪";
 
-  // ✅ Responsive
-  const [isNarrow, setIsNarrow] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    const check = () => {
-      const w = window.innerWidth;
-      setIsNarrow(w < 980);
-      setIsMobile(w < 640);
-    };
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
+  const { isNarrow, isMobile } = useResponsive();
 
   // ======================
   // Local Source of Truth (NO DB)
@@ -1031,10 +979,10 @@ const cardBody = { display: "grid", gap: 6 };
 const row = { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" };
 const k = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
 const v = { fontSize: 12, color: "#111827", fontWeight: 900 };
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
+const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
 const btnOutline = { padding: "10px 16px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
 const btnTiny = { padding: "8px 12px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap", opacity: 1 };
+const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap", opacity: 1 };
 const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const overlay = { position: "fixed", inset: 0, backgroundColor: "rgba(15,23,42,0.45)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 999, padding: 14 };
 const modal = { width: "100%", maxWidth: 980, backgroundColor: "#ffffff", borderRadius: 20, padding: "18px 18px 16px", boxShadow: "0 25px 50px rgba(15,23,42,0.35)", maxHeight: "90vh", overflowY: "auto" };

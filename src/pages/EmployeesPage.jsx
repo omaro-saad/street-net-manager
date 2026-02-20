@@ -1,15 +1,9 @@
 // src/pages/EmployeesPage.jsx
 import { useEffect, useMemo, useState } from "react";
 import { useData } from "../DataContext";
+import { safeArray, safeObj, nowMs, genId } from "../utils/helpers.js";
+import { theme } from "../theme.js";
 
-const primary = "#8b5cf6";
-
-/* ======================
-   Helpers
-====================== */
-function nowMs() {
-  return Date.now();
-}
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
@@ -35,15 +29,6 @@ function toDateISOFromAny(v) {
     if (!Number.isNaN(d.getTime())) return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   }
   return "";
-}
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function safeObj(x) {
-  return x && typeof x === "object" && !Array.isArray(x) ? x : {};
-}
-function genId(prefix) {
-  return `${prefix}_${nowMs()}_${Math.floor(Math.random() * 100000)}`;
 }
 function toNum(x) {
   const s = String(x ?? "").trim().replace(",", ".");
@@ -1065,13 +1050,13 @@ const chip = { padding: "6px 10px", borderRadius: 999, border: "1px solid #c7d2f
 const chipIncome = { padding: "6px 10px", borderRadius: 999, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#065f46", fontWeight: 900, fontSize: 12 };
 const chipExpense = { padding: "6px 10px", borderRadius: 999, border: "1px solid #fecaca", background: "#fef2f2", color: "#991b1b", fontWeight: 900, fontSize: 12 };
 
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
+const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
 const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnTiny = { padding: "8px 12px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnGhost = { padding: "10px 16px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
 
 const modalOverlay = { position: "fixed", inset: 0, background: "rgba(17,24,39,0.35)", display: "flex", justifyContent: "center", alignItems: "center", padding: 16, zIndex: 999 };
-const modalCard = { width: "min(860px, 96vw)", background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", padding: 14 };
+const modalCard = { width: "min(860px, 96vw)", maxHeight: "90vh", overflowY: "auto", background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", padding: 14 };
 const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 };
 const modalTitle = { fontSize: 16, fontWeight: 900, color: "#111827" };
 const iconBtn = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 12, padding: "8px 10px", cursor: "pointer", fontWeight: 900 };

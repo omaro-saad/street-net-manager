@@ -1,20 +1,8 @@
 // src/DataContext.jsx — In-memory only, NO database
 import React, { createContext, useContext, useMemo, useState } from "react";
+import { safeObj, safeArray, nowMs } from "./utils/helpers.js";
 
 const DataContext = createContext(null);
-
-function safeObj(x) {
-  return x && typeof x === "object" && !Array.isArray(x) ? x : {};
-}
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function nowMs() {
-  return Date.now();
-}
-function hasFn(fn) {
-  return typeof fn === "function";
-}
 
 function ensureDefaults(prev) {
   const p = safeObj(prev);

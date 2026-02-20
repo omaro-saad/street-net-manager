@@ -1,20 +1,6 @@
 // src/components/BottomNav.jsx
 import { NavLink } from "react-router-dom";
-
-const navItems = [
-  { to: "/", label: "الرئيسية", icon: "🏠", end: true },
-  { to: "/subscribers", label: "المشتركين", icon: "👥" },
-  { to: "/distributors", label: "الموزعين", icon: "🚚" },
-  { to: "/plans", label: "خطوط الشبكة", icon: "📶" },
-  // ✅ نخلي الخريطة بالنص (مركز)
-  { to: "/map", label: "الخريطة", icon: "🗺️", isMap: true },
-  { to: "/packages", label: "الحزم", icon: "📦" },
-  { to: "/devices", label: "الاجهزة", icon: "🖧" },
-  { to: "/employee", label: "الموظفين", icon: "🧑‍💼" },
-  { to: "/finance", label: "المالية", icon: "💰" },
-  { to: "/settings", label: "الاعدادات", icon: "⚙️" },
-
-];
+import { NAV_ITEMS } from "../config/routes.js";
 
 export default function BottomNav() {
   return (
@@ -66,9 +52,9 @@ export default function BottomNav() {
             justifyContent: "flex-start",
           }}
         >
-          {navItems.map((item) =>
-            item.isMap ? <NavItem key={item.to} {...item} /> : <NavItem key={item.to} {...item} />
-          )}
+          {NAV_ITEMS.map((item) => (
+            <NavItem key={item.to} {...item} />
+          ))}
         </nav>
       </div>
     </>

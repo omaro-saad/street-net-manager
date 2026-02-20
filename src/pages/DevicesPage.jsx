@@ -1,8 +1,9 @@
-// src/pages/DevicePage.jsx
+// src/pages/DevicesPage.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useData } from "../DataContext";
-
-const primary = "#8b5cf6";
+import { safeArray, safeObj, nowMs } from "../utils/helpers.js";
+import { useResponsive } from "../hooks/useResponsive.js";
+import { theme } from "../theme.js";
 
 const DEFAULT_SECTION_SUGGESTIONS = {
   "مستلزمات كهربائية": ["قاطع", "فيوز", "مقبس", "فيشة", "شريط كهرباء", "محول", "ريليه", "لمبة"],
@@ -13,9 +14,6 @@ const DEFAULT_SECTION_SUGGESTIONS = {
   "قطع تالفة": ["راوتر تالف", "سويتش تالف", "مزود طاقة تالف"],
 };
 
-function nowMs() {
-  return Date.now();
-}
 function safeNum(x, fallback = 0) {
   const n = Number(x);
   return Number.isFinite(n) ? n : fallback;
@@ -25,32 +23,10 @@ function money(n) {
   if (!Number.isFinite(v)) return "—";
   return `${v.toFixed(2)} ₪`;
 }
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function safeObj(x) {
-  return x && typeof x === "object" && !Array.isArray(x) ? x : {};
-}
-
-export default function DevicePage() {
+export default function DevicesPage() {
   const { data, setData } = useData();
 
-  // =========================
-  // ✅ Responsive
-  // =========================
-  const [isNarrow, setIsNarrow] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const check = () => {
-      const w = window.innerWidth;
-      setIsNarrow(w < 980);
-      setIsMobile(w < 640);
-    };
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
+  const { isNarrow, isMobile } = useResponsive();
 
   // =========================
   // In-memory only (NO DB)
@@ -1216,9 +1192,9 @@ const warnPill = {
   whiteSpace: "nowrap",
 };
 
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
+const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
 const btnOutline = { padding: "10px 16px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
+const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnTinyOutline = { padding: "8px 12px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 

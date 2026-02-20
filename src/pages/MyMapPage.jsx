@@ -3,27 +3,10 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import ReactFlow, { Background, Controls, addEdge, useEdgesState, useNodesState } from "reactflow";
 import "reactflow/dist/style.css";
 import { useData } from "../DataContext";
-
-// ✅ react-mentions
 import { MentionsInput, Mention } from "react-mentions";
-
-const primary = "#8b5cf6";
-
-/* =========================
-   Helpers
-   ========================= */
-function nowMs() {
-  return Date.now();
-}
-function normId(x) {
-  return String(x ?? "").trim();
-}
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function genId(prefix) {
-  return `${prefix}_${nowMs()}_${Math.floor(Math.random() * 100000)}`;
-}
+import { safeArray, nowMs, genId, normId } from "../utils/helpers.js";
+import { useResponsive } from "../hooks/useResponsive.js";
+import { theme } from "../theme.js";
 function cleanText(x) {
   const s = String(x ?? "").trim();
   return s ? s : "";
@@ -347,14 +330,7 @@ export default function MyMapPage() {
   const ctx = useData();
   const gate = ctx?.gate;
 
-  // ✅ Responsive
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 640);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
+  const { isMobile } = useResponsive();
 
   // =========================
   // ✅ Lines from Context
@@ -1150,10 +1126,10 @@ const inputAsBtn = { padding: "10px 12px", borderRadius: 14, border: "1px solid 
 
 const btnRow = { display: "flex", gap: 8, flexWrap: "wrap" };
 
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
-const btnPrimaryWide = { padding: "10px 12px", borderRadius: 14, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 13, boxShadow: "0 12px 30px rgba(15,23,42,0.15)" };
+const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
+const btnPrimaryWide = { padding: "10px 12px", borderRadius: 14, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 13, boxShadow: "0 12px 30px rgba(15,23,42,0.15)" };
 const btnOutline = { padding: "10px 16px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
+const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnTinyOutline = { padding: "8px 12px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap", color: "#111827" };
 const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnDangerWide = { padding: "10px 12px", borderRadius: 14, border: "1px solid #fecaca", backgroundColor: "#fff", color: "#dc2626", fontWeight: 900, cursor: "pointer", fontSize: 13 };

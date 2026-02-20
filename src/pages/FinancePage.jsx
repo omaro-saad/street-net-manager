@@ -1,25 +1,12 @@
 // FinancePage.jsx
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useData } from "../DataContext";
+import { safeArray, safeObj, nowMs, genId, fmtMoney } from "../utils/helpers.js";
+import { theme } from "../theme.js";
 
-const primary = "#8b5cf6";
-
-/* =========================
-   Helpers
-   ========================= */
-function fmt(n) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return "—";
-  return x.toFixed(2);
-}
-function nowMs() {
-  return Date.now();
-}
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
 function todayLocalISO() {
   const d = new Date();
+  const pad2 = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 function toNum(x) {
@@ -27,12 +14,6 @@ function toNum(x) {
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
-}
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function safeObj(x) {
-  return x && typeof x === "object" && !Array.isArray(x) ? x : {};
 }
 function asText(v) {
   if (v == null) return "";
@@ -48,10 +29,6 @@ function asText(v) {
   }
   return "";
 }
-function genId(prefix) {
-  return `${prefix}_${nowMs()}_${Math.floor(Math.random() * 100000)}`;
-}
-
 /* =========================
    Constants
    ========================= */
@@ -332,7 +309,7 @@ export default function FinancePage() {
       lines.push(`النوع: ${type}`);
       lines.push(`العنوان: ${inv.title || "—"}`);
       lines.push(`طريقة الدفع: ${inv.payMethod || "—"}`);
-      lines.push(`المبلغ: ${sign} ${fmt(inv.amount)} ${currency}`);
+      lines.push(`المبلغ: ${sign} ${fmtMoney(inv.amount)} ${currency}`);
       if (inv.note) lines.push(`ملاحظة: ${asText(inv.note)}`);
       lines.push("");
       lines.push("-".repeat(40));
@@ -361,7 +338,7 @@ export default function FinancePage() {
       lines.push(`التاريخ: ${inv.date || "—"}`);
       lines.push(`الاسم: ${inv.name || "—"}`);
       lines.push(`الجوال: ${inv.phone || "—"}`);
-      lines.push(`المبلغ: ${fmt(inv.amount)} ${currency}`);
+      lines.push(`المبلغ: ${fmtMoney(inv.amount)} ${currency}`);
       if (inv.details) lines.push(`تفاصيل: ${asText(inv.details)}`);
       lines.push("");
       lines.push("-".repeat(40));
@@ -425,14 +402,14 @@ export default function FinancePage() {
           <div style={totalCard}>
             <div style={totalLabel}>صافي اليوم ({todayKey})</div>
             <div style={totalValue}>
-              {fmt(todayTotal)} {currency}
+              {fmtMoney(todayTotal)} {currency}
             </div>
           </div>
         ) : (
           <div style={totalCard}>
             <div style={totalLabel}>إجمالي المعروض (بدون الطلبات)</div>
             <div style={totalValue}>
-              {fmt(autoTotal)} {currency}
+              {fmtMoney(autoTotal)} {currency}
             </div>
           </div>
         )}
@@ -515,7 +492,7 @@ export default function FinancePage() {
             <div style={sectionHeader}>
               <div style={sectionTitle}>الفواتير اليدوية</div>
               <div style={sectionHint}>
-                صافي المعروض: {fmt(manualTotal)} {currency}
+                صافي المعروض: {fmtMoney(manualTotal)} {currency}
               </div>
             </div>
 
@@ -540,7 +517,7 @@ export default function FinancePage() {
 
                       <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
                         <div style={amount}>
-                          {sign} {fmt(inv.amount)} {currency}
+                          {sign} {fmtMoney(inv.amount)} {currency}
                         </div>
                         <div style={{ display: "flex", gap: 8 }}>
                           <button style={btnTiny} onClick={() => openEditManual(inv)}>
@@ -697,7 +674,7 @@ export default function FinancePage() {
 
                       <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
                         <div style={amount}>
-                          {fmt(inv.amount)} {currency}
+                          {fmtMoney(inv.amount)} {currency}
                         </div>
 
                         {isPending ? (
@@ -791,7 +768,7 @@ const tabBtn = (active) => ({
   padding: "10px 14px",
   borderRadius: 999,
   border: active ? "none" : "1px solid #e5e7eb",
-  background: active ? primary : "#fff",
+  background: active ? theme.primary : "#fff",
   color: active ? "#fff" : "#111827",
   fontWeight: 900,
   cursor: "pointer",
@@ -801,7 +778,7 @@ const tabBtn = (active) => ({
 const tabBtnSpecial = () => ({
   padding: "10px 14px",
   borderRadius: 999,
-  border: `1px solid ${primary}`,
+  border: `1px solid ${theme.primary}`,
   background: "#f5f3ff",
   color: "#4c1d95",
   fontWeight: 900,
@@ -839,7 +816,7 @@ const chipPending = { padding: "6px 10px", borderRadius: 999, border: "1px solid
 const chipApproved = { padding: "6px 10px", borderRadius: 999, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#065f46", fontWeight: 900, fontSize: 12 };
 
 const amount = { fontSize: 16, fontWeight: 900, color: "#111827" };
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
+const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
 const btnDanger = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
 
 const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };

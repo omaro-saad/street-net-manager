@@ -1,25 +1,9 @@
 // src/pages/PlansPage.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useData } from "../DataContext";
-
-const primary = "#8b5cf6";
-
-/* ===== Helpers ===== */
-function nowMs() {
-  return Date.now();
-}
-function normId(x) {
-  return String(x ?? "").trim();
-}
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function safeObj(x) {
-  return x && typeof x === "object" && !Array.isArray(x) ? x : {};
-}
-function genId(prefix) {
-  return `${prefix}_${nowMs()}_${Math.floor(Math.random() * 100000)}`;
-}
+import { safeArray, safeObj, nowMs, genId, normId } from "../utils/helpers.js";
+import { useResponsive } from "../hooks/useResponsive.js";
+import { theme } from "../theme.js";
 function ensureLineShape(raw) {
   const x = raw && typeof raw === "object" ? raw : {};
   const id = normId(x.id) || genId("line");
@@ -47,20 +31,7 @@ export default function PlansPage() {
   const ctx = useData();
   const { data, setData } = ctx || {};
 
-  // ✅ Responsive
-  const [isNarrow, setIsNarrow] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const check = () => {
-      const w = window.innerWidth;
-      setIsNarrow(w < 980);
-      setIsMobile(w < 640);
-    };
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
+  const { isNarrow, isMobile } = useResponsive();
 
   // =========================
   // Local Source of Truth (NO DB)
@@ -727,7 +698,7 @@ const btnPrimary = {
   padding: "10px 16px",
   borderRadius: 999,
   border: "none",
-  backgroundColor: primary,
+  backgroundColor: theme.primary,
   color: "#fff",
   fontWeight: 900,
   cursor: "pointer",
@@ -736,7 +707,7 @@ const btnPrimary = {
   whiteSpace: "nowrap",
 };
 const btnOutline = { padding: "10px 16px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
+const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnTinyOutline = { padding: "8px 12px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 
