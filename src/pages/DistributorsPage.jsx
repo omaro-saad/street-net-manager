@@ -566,9 +566,6 @@ export default function DistributorsPage() {
       <div style={topRowR}>
         <div>
           <h1 style={{ ...h1, fontSize: isMobile ? 22 : 26 }}>الموزعين</h1>
-          <div style={{ ...tinyHint, marginTop: 6 }}>
-            ✅ هذه الصفحة الآن تعمل <b>بدون DB</b> (حفظ محلي عبر DataContext).
-          </div>
           {typeof setData !== "function" ? (
             <div style={warnText}>⚠️ setData غير متوفر — الإضافة/التعديل/الحذف لن تحفظ.</div>
           ) : null}

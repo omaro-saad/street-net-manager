@@ -850,9 +850,6 @@ export default function SubscribersPage() {
       <div style={topRowR}>
         <div>
           <h1 style={{ ...h1, fontSize: isMobile ? 22 : 26 }}>المشتركين</h1>
-          <p style={{ ...p, maxWidth: isMobile ? "100%" : 720 }}>
-            <span style={{ color: "#065f46", fontWeight: 900 }}>✅ الوضع الافتراضي: حفظ محلي داخل التطبيق (بدون قاعدة بيانات).</span>
-          </p>
         </div>
 
         <div style={statCardR}>
