@@ -26,7 +26,16 @@ const corsOptions = config.allowedOrigins.length
       credentials: true,
     }
   : config.nodeEnv === "production"
-    ? { origin: false, credentials: false }
+    ? {
+        origin: (origin, cb) => {
+          if (!origin) return cb(null, true);
+          try {
+            if (/\.vercel\.app$/i.test(new URL(origin).hostname)) return cb(null, true);
+          } catch {}
+          return cb(null, false);
+        },
+        credentials: true,
+      }
     : { origin: true, credentials: true };
 app.use(cors(corsOptions));
 

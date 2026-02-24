@@ -9,13 +9,16 @@ export function getApiUrl() {
   return API_URL;
 }
 
+/** True when the app can call the API: VITE_API_URL set, or browser on http(s) for same-origin. */
 export function isApiMode() {
-  return !!API_URL;
+  if (API_URL) return true;
+  if (typeof window !== "undefined" && window.location?.origin?.startsWith("http")) return true;
+  return false;
 }
 
 /** Login. 403 with code "subscription_expired" is expected for expired accounts and is handled by redirecting to the subscription-expired page (browser may still log the 403 in console). */
 export async function apiLogin(username, password) {
-  const res = await fetch(`${API_URL}/api/auth/login`, {
+  const res = await fetch(`${API_URL || ""}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: String(username).trim(), password: String(password) }),
@@ -43,7 +46,7 @@ export async function apiLogin(username, password) {
 }
 
 export async function apiMe(token) {
-  const res = await fetch(`${API_URL}/api/auth/me`, {
+  const res = await fetch(`${API_URL || ""}/api/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -75,7 +78,7 @@ export async function apiMe(token) {
 export async function apiUpdateUsername(token, newUsername, secretCode) {
   const body = { newUsername: String(newUsername).trim() };
   if (secretCode != null && String(secretCode).trim()) body.secretCode = String(secretCode).trim();
-  const res = await fetch(`${API_URL}/api/auth/profile/username`, {
+  const res = await fetch(`${API_URL || ""}/api/auth/profile/username`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -92,7 +95,7 @@ export async function apiUpdateUsername(token, newUsername, secretCode) {
 
 /** Reset password with username + secret reset code + new password (no auth). */
 export async function apiResetPassword(username, resetCode, newPassword) {
-  const res = await fetch(`${API_URL}/api/auth/reset-password`, {
+  const res = await fetch(`${API_URL || ""}/api/auth/reset-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -110,7 +113,7 @@ export async function apiResetPassword(username, resetCode, newPassword) {
 
 /** List Ousers in org (Oadmin only). */
 export async function apiListOusers(token) {
-  const res = await fetch(`${API_URL}/api/auth/ousers`, {
+  const res = await fetch(`${API_URL || ""}/api/auth/ousers`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -120,7 +123,7 @@ export async function apiListOusers(token) {
 
 /** Get Ouser permissions (Oadmin only). Returns permissions = { moduleKey: "read"|"read_write" }. */
 export async function apiGetOuserPermissions(token, ouserId) {
-  const res = await fetch(`${API_URL}/api/auth/ousers/${encodeURIComponent(ouserId)}/permissions`, {
+  const res = await fetch(`${API_URL || ""}/api/auth/ousers/${encodeURIComponent(ouserId)}/permissions`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -131,7 +134,7 @@ export async function apiGetOuserPermissions(token, ouserId) {
 
 /** Set Ouser permissions (Oadmin only). permissions = { moduleKey: "read"|"read_write" }. */
 export async function apiSetOuserPermissions(token, ouserId, permissions) {
-  const res = await fetch(`${API_URL}/api/auth/ousers/${encodeURIComponent(ouserId)}/permissions`, {
+  const res = await fetch(`${API_URL || ""}/api/auth/ousers/${encodeURIComponent(ouserId)}/permissions`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ permissions: permissions && typeof permissions === "object" ? permissions : {} }),
@@ -143,7 +146,7 @@ export async function apiSetOuserPermissions(token, ouserId, permissions) {
 
 /** Lines (persist in DB when API + Supabase). */
 export async function apiLinesList(token) {
-  const res = await fetch(`${API_URL}/api/lines`, {
+  const res = await fetch(`${API_URL || ""}/api/lines`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -152,7 +155,7 @@ export async function apiLinesList(token) {
 }
 
 export async function apiLinesAdd(token, body) {
-  const res = await fetch(`${API_URL}/api/lines`, {
+  const res = await fetch(`${API_URL || ""}/api/lines`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -163,7 +166,7 @@ export async function apiLinesAdd(token, body) {
 }
 
 export async function apiLinesUpdate(token, id, body) {
-  const res = await fetch(`${API_URL}/api/lines/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/lines/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -174,7 +177,7 @@ export async function apiLinesUpdate(token, id, body) {
 }
 
 export async function apiLinesDelete(token, id) {
-  const res = await fetch(`${API_URL}/api/lines/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/lines/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -185,7 +188,7 @@ export async function apiLinesDelete(token, id) {
 
 /** Packages (persist in DB when API + Supabase). */
 export async function apiPackagesList(token) {
-  const res = await fetch(`${API_URL}/api/packages`, {
+  const res = await fetch(`${API_URL || ""}/api/packages`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -194,7 +197,7 @@ export async function apiPackagesList(token) {
 }
 
 export async function apiPackagesAdd(token, body) {
-  const res = await fetch(`${API_URL}/api/packages`, {
+  const res = await fetch(`${API_URL || ""}/api/packages`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -205,7 +208,7 @@ export async function apiPackagesAdd(token, body) {
 }
 
 export async function apiPackagesUpdate(token, id, body) {
-  const res = await fetch(`${API_URL}/api/packages/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/packages/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -216,7 +219,7 @@ export async function apiPackagesUpdate(token, id, body) {
 }
 
 export async function apiPackagesDelete(token, id) {
-  const res = await fetch(`${API_URL}/api/packages/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/packages/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -227,7 +230,7 @@ export async function apiPackagesDelete(token, id) {
 
 /** Subscribers (persist in DB when API + Supabase). */
 export async function apiSubscribersList(token) {
-  const res = await fetch(`${API_URL}/api/subscribers`, {
+  const res = await fetch(`${API_URL || ""}/api/subscribers`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -236,7 +239,7 @@ export async function apiSubscribersList(token) {
 }
 
 export async function apiSubscribersAdd(token, body) {
-  const res = await fetch(`${API_URL}/api/subscribers`, {
+  const res = await fetch(`${API_URL || ""}/api/subscribers`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -247,7 +250,7 @@ export async function apiSubscribersAdd(token, body) {
 }
 
 export async function apiSubscribersUpdate(token, id, body) {
-  const res = await fetch(`${API_URL}/api/subscribers/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/subscribers/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -258,7 +261,7 @@ export async function apiSubscribersUpdate(token, id, body) {
 }
 
 export async function apiSubscribersDelete(token, id) {
-  const res = await fetch(`${API_URL}/api/subscribers/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/subscribers/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -269,7 +272,7 @@ export async function apiSubscribersDelete(token, id) {
 
 /** Distributors (persist in DB when API + Supabase). */
 export async function apiDistributorsList(token) {
-  const res = await fetch(`${API_URL}/api/distributors`, {
+  const res = await fetch(`${API_URL || ""}/api/distributors`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -278,7 +281,7 @@ export async function apiDistributorsList(token) {
 }
 
 export async function apiDistributorsAdd(token, body) {
-  const res = await fetch(`${API_URL}/api/distributors`, {
+  const res = await fetch(`${API_URL || ""}/api/distributors`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -289,7 +292,7 @@ export async function apiDistributorsAdd(token, body) {
 }
 
 export async function apiDistributorsUpdate(token, id, body) {
-  const res = await fetch(`${API_URL}/api/distributors/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/distributors/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -300,7 +303,7 @@ export async function apiDistributorsUpdate(token, id, body) {
 }
 
 export async function apiDistributorsDelete(token, id) {
-  const res = await fetch(`${API_URL}/api/distributors/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/distributors/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -311,7 +314,7 @@ export async function apiDistributorsDelete(token, id) {
 
 /** Employees (persist in DB when API + Supabase). */
 export async function apiEmployeesList(token) {
-  const res = await fetch(`${API_URL}/api/employees`, {
+  const res = await fetch(`${API_URL || ""}/api/employees`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -320,7 +323,7 @@ export async function apiEmployeesList(token) {
 }
 
 export async function apiEmployeesAdd(token, body) {
-  const res = await fetch(`${API_URL}/api/employees`, {
+  const res = await fetch(`${API_URL || ""}/api/employees`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -331,7 +334,7 @@ export async function apiEmployeesAdd(token, body) {
 }
 
 export async function apiEmployeesUpdate(token, id, body) {
-  const res = await fetch(`${API_URL}/api/employees/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/employees/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -342,7 +345,7 @@ export async function apiEmployeesUpdate(token, id, body) {
 }
 
 export async function apiEmployeesDelete(token, id) {
-  const res = await fetch(`${API_URL}/api/employees/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_URL || ""}/api/employees/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -353,7 +356,7 @@ export async function apiEmployeesDelete(token, id) {
 
 /** Inventory / Devices (persist in DB when API + Supabase). warehouses, sections, items. */
 export async function apiInventoryGet(token) {
-  const res = await fetch(`${API_URL}/api/inventory`, {
+  const res = await fetch(`${API_URL || ""}/api/inventory`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -362,7 +365,7 @@ export async function apiInventoryGet(token) {
 }
 
 export async function apiInventorySet(token, payload) {
-  const res = await fetch(`${API_URL}/api/inventory`, {
+  const res = await fetch(`${API_URL || ""}/api/inventory`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
@@ -374,7 +377,7 @@ export async function apiInventorySet(token, payload) {
 
 /** Finance KV (persist in DB when API + Supabase). manualInvoices, autoInvoices, etc. */
 export async function apiFinanceGet(token) {
-  const res = await fetch(`${API_URL}/api/finance`, {
+  const res = await fetch(`${API_URL || ""}/api/finance`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -383,7 +386,7 @@ export async function apiFinanceGet(token) {
 }
 
 export async function apiFinancePut(token, kv) {
-  const res = await fetch(`${API_URL}/api/finance`, {
+  const res = await fetch(`${API_URL || ""}/api/finance`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(kv && typeof kv === "object" ? kv : {}),
@@ -395,7 +398,7 @@ export async function apiFinancePut(token, kv) {
 
 /** Settings (theme, company name, about). Persist in DB when API + Supabase. */
 export async function apiSettingsGet(token) {
-  const res = await fetch(`${API_URL}/api/settings`, {
+  const res = await fetch(`${API_URL || ""}/api/settings`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -404,7 +407,7 @@ export async function apiSettingsGet(token) {
 }
 
 export async function apiSettingsPut(token, payload) {
-  const res = await fetch(`${API_URL}/api/settings`, {
+  const res = await fetch(`${API_URL || ""}/api/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload && typeof payload === "object" ? payload : {}),
@@ -416,7 +419,7 @@ export async function apiSettingsPut(token, payload) {
 
 /** Maps (persist in DB when API + Supabase). Per-line map data (nodes, edges, viewport). */
 export async function apiMapsGet(token, lineId) {
-  const res = await fetch(`${API_URL}/api/maps/${encodeURIComponent(lineId)}`, {
+  const res = await fetch(`${API_URL || ""}/api/maps/${encodeURIComponent(lineId)}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -425,7 +428,7 @@ export async function apiMapsGet(token, lineId) {
 }
 
 export async function apiMapsSet(token, lineId, payload) {
-  const res = await fetch(`${API_URL}/api/maps/${encodeURIComponent(lineId)}`, {
+  const res = await fetch(`${API_URL || ""}/api/maps/${encodeURIComponent(lineId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
@@ -437,7 +440,7 @@ export async function apiMapsSet(token, lineId, payload) {
 
 /** Backup (admin only): one file per org, replace on each backup. */
 export async function apiBackupGet(token) {
-  const res = await fetch(`${API_URL}/api/backup`, {
+  const res = await fetch(`${API_URL || ""}/api/backup`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));
@@ -446,7 +449,7 @@ export async function apiBackupGet(token) {
 }
 
 export async function apiBackupPost(token, snapshot) {
-  const res = await fetch(`${API_URL}/api/backup`, {
+  const res = await fetch(`${API_URL || ""}/api/backup`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(snapshot != null ? { data: snapshot } : {}),
@@ -457,7 +460,7 @@ export async function apiBackupPost(token, snapshot) {
 }
 
 export async function apiBackupRestore(token) {
-  const res = await fetch(`${API_URL}/api/backup/restore`, {
+  const res = await fetch(`${API_URL || ""}/api/backup/restore`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
   });
@@ -468,7 +471,7 @@ export async function apiBackupRestore(token) {
 
 /** Delete all org data (admin only). Keeps backup and accounts. Then client should logout. */
 export async function apiDeleteAllData(token) {
-  const res = await fetch(`${API_URL}/api/data/delete-all`, {
+  const res = await fetch(`${API_URL || ""}/api/data/delete-all`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
   });

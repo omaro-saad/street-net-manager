@@ -24,34 +24,34 @@ Optional:
 
 - **CORS_ALLOWED_ORIGINS** – Comma-separated origins allowed to call the API (e.g. `https://your-site.vercel.app`). If frontend and API are on the same Vercel domain, you can leave this unset.
 
-## Deploy
+## What to do after setting environment variables
+
+1. **Redeploy** so the new env vars are used:
+   - **Vercel dashboard** → your project → **Deployments** → open the **⋯** on the latest deployment → **Redeploy** (or push a new commit to the connected branch).
+2. Wait for the build to finish. Vercel will:
+   - Run `npm run build` → output in `dist`
+   - Serve the frontend from `dist`
+   - Route `/api/*`, `/health`, `/favicon.ico` to the Express API (serverless)
+3. Open your site URL (e.g. `https://your-project.vercel.app`). Frontend and API are on the same domain; no extra setup.
+
+You do **not** need to set Build Command, Output Directory, or Install Command in Vercel — `vercel.json` already configures the build.
+
+## Deploy (first time or new repo)
 
 1. Push the repo (with `api/`, `vercel.json`, and root deps) to Git.
-2. In Vercel, import the project (or connect the same repo).
-3. Set the env vars above.
-4. Deploy. Vercel will:
-   - Run `npm run build` → output in `dist`
-   - Serve the app from `dist`
-   - Route `/api/*`, `/health`, `/favicon.ico` to the Express API
+2. In Vercel: **Add New** → **Project** → import from Git (GitHub/GitLab/Bitbucket).
+3. Set the env vars above in **Settings → Environment Variables**.
+4. Click **Deploy**. After the first deploy, every push to the connected branch will auto-deploy.
 
-No need to run the server in bash; the API runs on each request.
+## Frontend API URL (no need on Vercel)
 
-## Frontend API URL
+On Vercel, frontend and API are on the **same deployment URL**. The app uses **relative** URLs (`/api/...`) when `VITE_API_URL` is not set and it’s running in the browser, so you **do not need** to set `VITE_API_URL` in Vercel. That avoids CORS and works with every preview URL.
 
-On Vercel, frontend and API are on the **same domain** (e.g. `https://your-project.vercel.app`). So the app can call `/api/auth/login` etc. with a **relative** URL.
-
-- Either **do not** set `VITE_API_URL` when building on Vercel (so the app uses the same origin),  
-- Or set **VITE_API_URL** in Vercel to your production URL, e.g. `https://your-project.vercel.app`, so all API calls go to that origin.
-
-If you leave `VITE_API_URL` unset, the built app will have no API URL unless you inject it. So in Vercel, add:
-
-- **VITE_API_URL** = `https://your-project.vercel.app` (use your real Vercel URL)
-
-so the production build knows where to send API requests (same origin).
+If you host the frontend elsewhere and call this API from another domain, set **CORS_ALLOWED_ORIGINS** to that origin and set **VITE_API_URL** in that frontend’s build to this API URL.
 
 ## Summary
 
 - One Vercel project = frontend + API.
 - Set **JWT_SECRET** (required) and **SUPABASE_*** (for persistent DB).
-- Set **VITE_API_URL** to your Vercel URL so login works.
+- Do **not** set **VITE_API_URL** — the app uses the same origin on Vercel.
 - Deploy once; the “server” runs automatically on Vercel.
