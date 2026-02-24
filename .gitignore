@@ -24,6 +24,9 @@ release
 secrets.json
 config.local.*
 
+# Supabase local
+supabase/.temp/
+
 # Database files (user data - keep local only)
 *.db
 *.sqlite

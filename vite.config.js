@@ -2,9 +2,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// For GitHub Pages use: VITE_BASE_PATH=/street-net-manager/
 export default defineConfig({
   plugins: [react()],
-  base: "./",
+  base: process.env.VITE_BASE_PATH || "./",
   build: {
     outDir: "dist",
     assetsDir: "assets",

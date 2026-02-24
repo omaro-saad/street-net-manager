@@ -92,7 +92,10 @@ export function AuthProvider({ children }) {
     const p = String(password ?? "");
 
     if (!isApiMode()) {
-      return { ok: false, error: "تسجيل الدخول يتطلب الاتصال بالخادم. تأكد من تشغيل الخادم وضبط VITE_API_URL." };
+      return {
+        ok: false,
+        error: "لا يوجد اتصال بالخادم. شغّل الخادم من مجلد server (npm start) ثم حدّث الصفحة. للتطوير يمكن استخدام ملف .env.development وضبط VITE_API_URL فيه (مثال: http://localhost:3000).",
+      };
     }
 
     const res = await apiLogin(u, p);
