@@ -1,8 +1,46 @@
 // src/pages/EmployeesPage.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useData } from "../DataContext";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { useAlert } from "../contexts/AlertContext.jsx";
+import ReadOnlyBanner from "../components/ReadOnlyBanner.jsx";
+import LoadingLogo from "../components/LoadingLogo.jsx";
+import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import LoadingOverlay from "../components/LoadingOverlay.jsx";
+import {
+  READ_ONLY_MESSAGE,
+  isApiMode,
+  apiEmployeesList,
+  apiEmployeesAdd,
+  apiEmployeesUpdate,
+  apiEmployeesDelete,
+  apiFinancePut,
+} from "../lib/api.js";
 import { safeArray, safeObj, nowMs, genId } from "../utils/helpers.js";
 import { theme } from "../theme.js";
+import { Modal, Field } from "../components/shared/index.js";
+import {
+  pageWrap,
+  input,
+  btnPrimary,
+  btnGhost,
+  btnTinyPrimary,
+  btnTinyDanger,
+  btnTiny,
+  modalCard,
+  iconBtn,
+  grid2,
+  miniLabel,
+  chip,
+  chipPrimary,
+  chipIncome,
+  chipExpense,
+  tinyNote,
+  emptyBox,
+  h1,
+  contentCenterWrap,
+} from "../styles/shared.js";
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -133,8 +171,11 @@ async function addToAutoInvoices(finance, row) {
 
 export default function EmployeesPage() {
   const { data, setData, gate } = useData();
+  const { token } = useAuth();
 
-  // In-memory only (gate from DataContext)
+  const useEmployeesApi = isApiMode() && !!token;
+
+  // In-memory or API (gate from DataContext when not using API)
   const empApi = gate?.employees || null;
   const empReady = !!(empApi && typeof empApi.list === "function" && typeof empApi.update === "function" && typeof empApi.create === "function");
 
@@ -147,34 +188,55 @@ export default function EmployeesPage() {
   const currency = gate?.financeDb?.settings?.get?.()?.currency || "₪";
 
   /* ======================
-     Load employees (in-memory)
+     Load employees (API when isApiMode + token, else in-memory)
 ====================== */
   const [employeesRaw, setEmployeesRaw] = useState([]);
   const [loadErr, setLoadErr] = useState("");
+  const [employeesLoading, setEmployeesLoading] = useState(true);
+  const { execute, isLoading: actionLoading } = useAsyncAction({ minLoadingMs: 1000 });
 
-  const refreshEmployees = async () => {
+  const dataRef = useRef(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  const refreshEmployees = useCallback(async () => {
+    setEmployeesLoading(true);
     try {
-      if (empReady) {
+      if (useEmployeesApi && token) {
+        const res = await apiEmployeesList(token);
+        const list = res.ok && Array.isArray(res.data) ? res.data : [];
+        setEmployeesRaw(list);
+        setData((prev) => ({ ...prev, employees: list, updatedAt: nowMs() }));
+        setLoadErr(res.ok ? "" : res.error || "خطأ في تحميل الموظفين");
+      } else if (empReady) {
         const rows = await empApi.list();
         setEmployeesRaw(safeArray(rows));
         setLoadErr("");
       } else {
-        // Fallback: use data.employees from context
-        setEmployeesRaw(safeArray(data?.employees));
+        setEmployeesRaw(safeArray(dataRef.current?.employees));
         setLoadErr("");
       }
     } catch (e) {
       setLoadErr(String(e?.message || e || "خطأ في تحميل الموظفين"));
-      setEmployeesRaw(safeArray(data?.employees));
+      setEmployeesRaw(safeArray(dataRef.current?.employees));
+    } finally {
+      setEmployeesLoading(false);
     }
-  };
+  }, [useEmployeesApi, token, empReady, setData]);
 
+  // Load list on mount and when API/gate readiness changes.
   useEffect(() => {
     refreshEmployees();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empReady, data?.employees]);
+  }, [refreshEmployees]);
 
   const employees = useMemo(() => safeArray(employeesRaw), [employeesRaw]);
+
+  const { getLimit, canWrite } = useAuth();
+  const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showConfirmAlert } = useAlert();
+  const employeesLimit = getLimit("employees");
+  const employeesAtLimit = employeesLimit != null && employees.length >= employeesLimit;
+  const canWriteEmployee = canWrite("employee");
 
   /* ======================
      UI state
@@ -251,7 +313,7 @@ export default function EmployeesPage() {
      CRUD: Employees
 ====================== */
   const openAddEmployee = () => {
-    if (!empReady && !setData) return alert("✖ نظام الموظفين غير جاهز.");
+    if (!empReady && !setData) return showErrorAlert("نظام الموظفين غير جاهز.");
     setEditingEmployeeId(null);
     setEmployeeForm({ ...emptyEmployeeForm, hireDate: todayLocalISO() });
     setEmployeeModalOpen(true);
@@ -293,13 +355,22 @@ export default function EmployeesPage() {
   const saveEmployee = async (e) => {
     e.preventDefault();
 
+    if (!canWriteEmployee) {
+      showReadOnlyAlert();
+      return;
+    }
+    if (!editingEmployeeId && employeesAtLimit) {
+      showPlanLimitAlert();
+      return;
+    }
+
     const name = String(employeeForm.name || "").trim();
     const nationalId = String(employeeForm.nationalId || "").trim();
     const phone = String(employeeForm.phone || "").trim();
 
-    if (!name) return alert("اسم الموظف مطلوب.");
-    if (!nationalId) return alert("هوية الموظف مطلوبة.");
-    if (!phone) return alert("رقم هاتف الموظف مطلوب.");
+    if (!name) return showValidationAlert("اسم الموظف مطلوب.", "اسم الموظف");
+    if (!nationalId) return showValidationAlert("هوية الموظف مطلوبة.", "الهوية");
+    if (!phone) return showValidationAlert("رقم هاتف الموظف مطلوب.", "رقم الهاتف");
 
     const payload = {
       name,
@@ -321,38 +392,71 @@ export default function EmployeesPage() {
     };
 
     try {
+      await execute(async () => {
       if (!editingEmployeeId) {
+        const payroll = {
+          enabled: false,
+          amount: 0,
+          paymentMethod: "كاش",
+          paySystem: "بالشهر",
+          startDate: "",
+          nextRunDate: "",
+          lastRunAt: 0,
+          note: "",
+          runSeed: "",
+        };
         const emp = {
           id: genId("emp"),
           createdAt: nowMs(),
           updatedAt: nowMs(),
           ...payload,
-          payroll: {
-            enabled: false,
-            amount: 0,
-            paymentMethod: "كاش",
-            paySystem: "بالشهر",
-            startDate: "",
-            nextRunDate: "",
-            lastRunAt: 0,
-            note: "",
-            runSeed: "",
-          },
+          payroll,
         };
-        if (empReady) {
+        if (useEmployeesApi && token) {
+          const res = await apiEmployeesAdd(token, { ...payload, payroll, createdAt: nowMs(), updatedAt: nowMs() });
+          if (!res.ok) {
+            showErrorAlert(res.error || "فشل إضافة الموظف.");
+            return;
+          }
+          const created = res.data || { ...emp, id: res.data?.id ?? emp.id };
+          setEmployeesRaw((prev) => [created, ...prev]);
+          setData((prev) => ({ ...prev, employees: [created, ...safeArray(prev?.employees)], updatedAt: nowMs() }));
+        } else if (empReady) {
           await empApi.create(emp);
+          setEmployeesRaw((prev) => [emp, ...prev]);
         } else if (typeof setData === "function") {
           setData((prev) => ({
             ...prev,
             employees: [emp, ...safeArray(prev?.employees)],
             updatedAt: nowMs(),
           }));
+          setEmployeesRaw((prev) => [emp, ...prev]);
         }
-        setEmployeesRaw((prev) => [emp, ...prev]);
       } else {
         const patch = { ...payload, updatedAt: nowMs() };
-        if (empReady) {
+        if (useEmployeesApi && token) {
+          const res = await apiEmployeesUpdate(token, editingEmployeeId, patch);
+          if (!res.ok) {
+            showErrorAlert(res.error || "فشل تحديث الموظف.");
+            return;
+          }
+          const updated = res.data || { ...patch, id: editingEmployeeId };
+          setEmployeesRaw((prev) =>
+            prev.map((e) => (String(e?.id) === String(editingEmployeeId) ? updated : e))
+          );
+          setData((prev) => {
+            const arr = safeArray(prev?.employees);
+            const idx = arr.findIndex((x) => String(x?.id) === String(editingEmployeeId));
+            if (idx === -1) return prev;
+            const next = [...arr];
+            next[idx] = updated;
+            return { ...prev, employees: next, updatedAt: nowMs() };
+          });
+        } else if (empReady) {
           await empApi.update(editingEmployeeId, patch);
+          setEmployeesRaw((prev) =>
+            prev.map((e) => (String(e?.id) === String(editingEmployeeId) ? { ...e, ...patch } : e))
+          );
         } else if (typeof setData === "function") {
           setData((prev) => {
             const arr = safeArray(prev?.employees);
@@ -362,41 +466,59 @@ export default function EmployeesPage() {
             next[idx] = { ...next[idx], ...patch, id: editingEmployeeId };
             return { ...prev, employees: next, updatedAt: nowMs() };
           });
+          setEmployeesRaw((prev) =>
+            prev.map((e) => (String(e?.id) === String(editingEmployeeId) ? { ...e, ...patch } : e))
+          );
         }
-        setEmployeesRaw((prev) =>
-          prev.map((e) => (String(e?.id) === String(editingEmployeeId) ? { ...e, ...patch } : e))
-        );
       }
 
       setEmployeeModalOpen(false);
       setEditingEmployeeId(null);
+      });
     } catch (err) {
       console.error(err);
-      alert(`فشل حفظ الموظف.\n${String(err?.message || err)}`);
+      showErrorAlert(`فشل حفظ الموظف: ${String(err?.message || err)}`);
     }
   };
 
   const deleteEmployee = async (id) => {
-    if (!window.confirm("حذف الموظف؟")) return;
-
-    try {
-      if (empReady) {
-        await empApi.remove(id);
-        setEmployeesRaw((prev) => prev.filter((x) => String(x?.id) !== String(id)));
-      } else if (typeof setData === "function") {
-        setData((prev) => ({
-          ...prev,
-          employees: safeArray(prev?.employees).filter((x) => String(x?.id) !== String(id)),
-          updatedAt: nowMs(),
-        }));
-        setEmployeesRaw((prev) => prev.filter((x) => String(x?.id) !== String(id)));
-      } else {
-        return alert("✖ لا يمكن الحذف.");
-      }
-    } catch (err) {
-      console.error(err);
-      alert(`فشل حذف الموظف.\n${String(err?.message || err)}`);
-    }
+    if (!canWriteEmployee) return showReadOnlyAlert();
+    showConfirmAlert({
+      message: "حذف الموظف؟",
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        execute(async () => {
+            if (useEmployeesApi && token) {
+              const res = await apiEmployeesDelete(token, id);
+              if (!res.ok) {
+                showErrorAlert(res.error || "فشل حذف الموظف.");
+                return;
+              }
+              setEmployeesRaw((prev) => prev.filter((x) => String(x?.id) !== String(id)));
+              setData((prev) => ({
+                ...prev,
+                employees: safeArray(prev?.employees).filter((x) => String(x?.id) !== String(id)),
+                updatedAt: nowMs(),
+              }));
+            } else if (empReady) {
+              await empApi.remove(id);
+              setEmployeesRaw((prev) => prev.filter((x) => String(x?.id) !== String(id)));
+            } else if (typeof setData === "function") {
+              setData((prev) => ({
+                ...prev,
+                employees: safeArray(prev?.employees).filter((x) => String(x?.id) !== String(id)),
+                updatedAt: nowMs(),
+              }));
+              setEmployeesRaw((prev) => prev.filter((x) => String(x?.id) !== String(id)));
+            } else {
+              showErrorAlert("لا يمكن الحذف.");
+            }
+        }).catch((err) => {
+          console.error(err);
+          showErrorAlert(`فشل حذف الموظف: ${String(err?.message || err)}`);
+        });
+      },
+    });
   };
 
   /* ======================
@@ -431,8 +553,8 @@ export default function EmployeesPage() {
     const note = String(payrollForm.note || "").trim();
   
     if (enabled) {
-      if (amount === null || amount <= 0) return alert("راتب الموظف لازم يكون رقم أكبر من 0.");
-      if (!startDate) return alert("حدد تاريخ البدء.");
+      if (amount === null || amount <= 0) return showValidationAlert("راتب الموظف لازم يكون رقم أكبر من 0.", "الراتب");
+      if (!startDate) return showValidationAlert("حدد تاريخ البدء.", "تاريخ البدء");
     }
   
     const runSeed = enabled ? makePayrollSeed(payrollEmployeeId, startDate, paySystem, amount, paymentMethod) : "";
@@ -452,9 +574,38 @@ export default function EmployeesPage() {
     };
   
     try {
+      await execute(async () => {
       // 1) تحديث الموظف
-      if (empReady) {
-        await empApi.update(payrollEmployeeId, { payroll: nextPayroll, updatedAt: nowMs() });
+      const payrollPatch = { payroll: nextPayroll, updatedAt: nowMs() };
+      if (useEmployeesApi && token) {
+        const res = await apiEmployeesUpdate(token, payrollEmployeeId, payrollPatch);
+        if (!res.ok) {
+          showErrorAlert(res.error || "فشل تحديث الراتب.");
+          return;
+        }
+        const updated = res.data;
+        setEmployeesRaw((prev) =>
+          prev.map((e) =>
+            String(e?.id) === String(payrollEmployeeId) ? { ...e, payroll: nextPayroll } : e
+          )
+        );
+        if (updated) {
+          setData((prev) => {
+            const arr = safeArray(prev?.employees);
+            const idx = arr.findIndex((x) => String(x?.id) === String(payrollEmployeeId));
+            if (idx === -1) return prev;
+            const next = [...arr];
+            next[idx] = updated;
+            return { ...prev, employees: next, updatedAt: nowMs() };
+          });
+        }
+      } else if (empReady) {
+        await empApi.update(payrollEmployeeId, payrollPatch);
+        setEmployeesRaw((prev) =>
+          prev.map((e) =>
+            String(e?.id) === String(payrollEmployeeId) ? { ...e, payroll: nextPayroll } : e
+          )
+        );
       } else if (typeof setData === "function") {
         setData((prev) => {
           const arr = safeArray(prev?.employees);
@@ -464,12 +615,12 @@ export default function EmployeesPage() {
           next[idx] = { ...next[idx], payroll: nextPayroll, updatedAt: nowMs(), id: payrollEmployeeId };
           return { ...prev, employees: next, updatedAt: nowMs() };
         });
+        setEmployeesRaw((prev) =>
+          prev.map((e) =>
+            String(e?.id) === String(payrollEmployeeId) ? { ...e, payroll: nextPayroll } : e
+          )
+        );
       }
-      setEmployeesRaw((prev) =>
-        prev.map((e) =>
-          String(e?.id) === String(payrollEmployeeId) ? { ...e, payroll: nextPayroll } : e
-        )
-      );
   
       // 2) لو مش مفعّل: خلص
       if (!enabled) {
@@ -480,7 +631,7 @@ export default function EmployeesPage() {
   
       // 3) Finance readiness
       if (!financeReady) {
-        alert("⚠️ تم حفظ إعدادات الراتب في الموظفين، لكن المالية غير جاهزة. لن يتم إرسال فواتير الرواتب.");
+        showErrorAlert("تم حفظ إعدادات الراتب، لكن المالية غير جاهزة. لن يتم إرسال فواتير الرواتب.");
         setPayrollModalOpen(false);
         setPayrollEmployeeId(null);
         return;
@@ -569,12 +720,22 @@ export default function EmployeesPage() {
       // 9) حفظ (الجديد أولاً)
       const nextList = [...newInvoices, ...current];
       await finance.set("autoInvoices", nextList);
-  
+
+      // In API mode, persist finance so FinancePage shows the new payroll auto invoices
+      if (isApiMode() && token && data) {
+        const kv = safeObj(data?.finance?._kv);
+        const res = await apiFinancePut(token, { ...kv, autoInvoices: nextList });
+        if (res.ok && res.data && typeof setData === "function") {
+          setData((prev) => ({ ...prev, finance: { _kv: res.data }, updatedAt: nowMs() }));
+        }
+      }
+
       setPayrollModalOpen(false);
       setPayrollEmployeeId(null);
+      });
     } catch (err) {
       console.error(err);
-      alert(`فشل حفظ إعدادات الراتب.\n${String(err?.message || err)}`);
+      showErrorAlert(`فشل حفظ إعدادات الراتب: ${String(err?.message || err)}`);
     }
   };
   
@@ -583,7 +744,7 @@ export default function EmployeesPage() {
      Employee invoice -> Finance (autoInvoices)
 ====================== */
   const openEmployeeInvoice = (emp) => {
-    if (!financeReady && !financeDbUpsert) return alert("✖ المالية غير جاهزة.");
+    if (!financeReady && !financeDbUpsert) return showErrorAlert("المالية غير جاهزة.");
     setInvoiceEmployeeId(emp.id);
     setInvoiceForm({
       date: todayLocalISO(),
@@ -598,10 +759,10 @@ export default function EmployeesPage() {
   const saveEmployeeInvoice = async (e) => {
     e.preventDefault();
     if (!invoiceEmployeeId) return;
-    if (!financeReady && !financeDbUpsert) return alert("✖ المالية غير جاهزة.");
+    if (!financeReady && !financeDbUpsert) return showErrorAlert("المالية غير جاهزة.");
 
     const emp = employees.find((x) => x.id === invoiceEmployeeId);
-    if (!emp) return alert("الموظف غير موجود.");
+    if (!emp) return showErrorAlert("الموظف غير موجود.");
 
     const date = toDateISOFromAny(invoiceForm.date) || todayLocalISO();
     const invoiceType = String(invoiceForm.invoiceType || "يومية").trim();
@@ -609,7 +770,7 @@ export default function EmployeesPage() {
     const paymentMethod = PAYROLL_PAY_METHODS.includes(invoiceForm.paymentMethod) ? invoiceForm.paymentMethod : "كاش";
     const note = String(invoiceForm.note || "").trim();
 
-    if (amount === null || amount <= 0) return alert("المبلغ لازم يكون رقم أكبر من 0.");
+    if (amount === null || amount <= 0) return showValidationAlert("المبلغ لازم يكون رقم أكبر من 0.", "المبلغ");
 
     const autoInv = {
       id: genId("emp_tx"),
@@ -633,6 +794,7 @@ export default function EmployeesPage() {
     };
 
     try {
+      await execute(async () => {
       // ✅ source of truth write
       if (financeReady) {
         await addToAutoInvoices(finance, autoInv);
@@ -643,11 +805,22 @@ export default function EmployeesPage() {
         await financeDbUpsert("auto_invoices", autoInv);
       }
 
+      // In API mode, persist finance so FinancePage shows the new auto invoice
+      if (isApiMode() && token && data) {
+        const kv = safeObj(data?.finance?._kv);
+        const nextAuto = [autoInv, ...safeArray(kv.autoInvoices)];
+        const res = await apiFinancePut(token, { ...kv, autoInvoices: nextAuto });
+        if (res.ok && res.data && typeof setData === "function") {
+          setData((prev) => ({ ...prev, finance: { _kv: res.data }, updatedAt: nowMs() }));
+        }
+      }
+
       setInvoiceModalOpen(false);
       setInvoiceEmployeeId(null);
+      });
     } catch (err) {
       console.error(err);
-      alert(`فشل حفظ فاتورة الموظف.\n${String(err?.message || err)}`);
+      showErrorAlert(`فشل حفظ فاتورة الموظف: ${String(err?.message || err)}`);
     }
   };
 
@@ -661,8 +834,21 @@ export default function EmployeesPage() {
     return next;
   };
 
+  const displayLoading = useMinLoadingTime(employeesLoading && employees.length === 0);
+  if (displayLoading) {
+    return (
+      <div style={pageWrap}>
+        <div style={contentCenterWrap}>
+          <LoadingLogo />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={pageWrap}>
+      <LoadingOverlay visible={actionLoading} />
+      {!canWriteEmployee && <ReadOnlyBanner />}
       <div style={topRow}>
         <div>
           <h1 style={h1}>الموظفين</h1>
@@ -682,7 +868,12 @@ export default function EmployeesPage() {
             <input style={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="اسم / هوية / رقم / مسمى وظيفي..." />
           </div>
 
-          <button style={btnPrimary} onClick={openAddEmployee} title="إضافة موظف جديد">
+          <button
+            style={btnPrimary}
+            onClick={() => { if (employeesAtLimit) { showPlanLimitAlert(); return; } openAddEmployee(); }}
+            disabled={!canWriteEmployee || actionLoading}
+            title={!canWriteEmployee ? READ_ONLY_MESSAGE : undefined}
+          >
             + إضافة موظف
           </button>
         </div>
@@ -695,7 +886,9 @@ export default function EmployeesPage() {
         </div>
 
         {filteredEmployees.length === 0 ? (
-          <div style={emptyBox}>لا يوجد موظفين بعد.</div>
+          <div style={contentCenterWrap}>
+            <div style={emptyBox}>لا يوجد موظفين بعد.</div>
+          </div>
         ) : (
           <div style={list}>
             {filteredEmployees.map((e) => {
@@ -709,7 +902,7 @@ export default function EmployeesPage() {
                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                         <div style={rowTitle}>{e.name || "—"}</div>
                         <span style={chip}>هوية: {e.nationalId || "—"}</span>
-                        <span style={chip2}>📞 {e.phone || "—"}</span>
+                        <span style={chip}>📞 {e.phone || "—"}</span>
                       </div>
 
                       <div style={meta}>
@@ -722,13 +915,13 @@ export default function EmployeesPage() {
                         <span style={pr.enabled ? chipIncome : chipExpense}>الراتب: {pr.enabled ? "مفعّل" : "غير مفعّل"}</span>
                         {pr.enabled ? (
                           <>
-                            <span style={chip2}>
+                            <span style={chip}>
                               مبلغ: <b>{Number(pr.amount) || 0}</b> {currency}
                             </span>
-                            <span style={chip2}>
+                            <span style={chip}>
                               دفع: <b>{pr.paymentMethod || "كاش"}</b>
                             </span>
-                            <span style={chip2}>
+                            <span style={chip}>
                               نظام: <b>{pr.paySystem || "بالشهر"}</b>
                             </span>
                             <span style={chip}>
@@ -736,23 +929,23 @@ export default function EmployeesPage() {
                             </span>
                           </>
                         ) : (
-                          <span style={chip2}>—</span>
+                          <span style={chip}>—</span>
                         )}
                       </div>
                     </div>
 
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                        <button style={btnTiny} onClick={() => openEditEmployee(e)}>
+                        <button style={btnTiny} onClick={() => openEditEmployee(e)} disabled={!canWriteEmployee || actionLoading} title={!canWriteEmployee ? READ_ONLY_MESSAGE : undefined}>
                           تعديل
                         </button>
-                        <button style={btnTiny} onClick={() => openPayrollSettings(e)}>
+                        <button style={btnTiny} onClick={() => openPayrollSettings(e)} disabled={!canWriteEmployee || actionLoading} title={!canWriteEmployee ? READ_ONLY_MESSAGE : undefined}>
                           راتب الموظف
                         </button>
-                        <button style={btnTiny} onClick={() => openEmployeeInvoice(e)} disabled={!financeReady && !financeDbUpsert}>
+                        <button style={btnTiny} onClick={() => openEmployeeInvoice(e)} disabled={(!financeReady && !financeDbUpsert) || !canWriteEmployee || actionLoading} title={!canWriteEmployee ? READ_ONLY_MESSAGE : undefined}>
                           فاتورة الموظف
                         </button>
-                        <button style={btnTinyDanger} onClick={() => deleteEmployee(e.id)}>
+                        <button style={btnTinyDanger} onClick={() => deleteEmployee(e.id)} disabled={!canWriteEmployee || actionLoading} title={!canWriteEmployee ? READ_ONLY_MESSAGE : undefined}>
                           حذف
                         </button>
                       </div>
@@ -766,160 +959,144 @@ export default function EmployeesPage() {
       </div>
 
       {/* Employee Modal */}
-      {employeeModalOpen && (
-        <div style={modalOverlay} onMouseDown={() => setEmployeeModalOpen(false)}>
-          <div style={modalCard} onMouseDown={(e) => e.stopPropagation()}>
-            <div style={modalHeader}>
-              <div style={modalTitle}>{editingEmployeeId ? "تعديل موظف" : "إضافة موظف"}</div>
-              <button style={iconBtn} onClick={() => setEmployeeModalOpen(false)}>✕</button>
+      <Modal open={employeeModalOpen} onClose={() => setEmployeeModalOpen(false)} title={editingEmployeeId ? "تعديل موظف" : "إضافة موظف"} style={modalCard}>
+        <form onSubmit={saveEmployee} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={grid2}>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Field label="اسم الموظف *">
+                <input style={input} value={employeeForm.name} onChange={(e) => setEmployeeForm((f) => ({ ...f, name: e.target.value }))} />
+              </Field>
             </div>
-
-            <form onSubmit={saveEmployee} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={grid2}>
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <div style={miniLabel}>اسم الموظف *</div>
-                  <input style={input} value={employeeForm.name} onChange={(e) => setEmployeeForm((f) => ({ ...f, name: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>هوية الموظف *</div>
-                  <input style={input} value={employeeForm.nationalId} onChange={(e) => setEmployeeForm((f) => ({ ...f, nationalId: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>رقم هاتف الموظف *</div>
-                  <input style={input} value={employeeForm.phone} onChange={(e) => setEmployeeForm((f) => ({ ...f, phone: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>رقم هاتف احتياطي</div>
-                  <input style={input} value={employeeForm.phone2} onChange={(e) => setEmployeeForm((f) => ({ ...f, phone2: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>واتساب الموظف</div>
-                  <input style={input} value={employeeForm.whatsapp} onChange={(e) => setEmployeeForm((f) => ({ ...f, whatsapp: e.target.value }))} />
-                </div>
-
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <div style={miniLabel}>بريد إلكتروني (اختياري)</div>
-                  <input style={input} value={employeeForm.email} onChange={(e) => setEmployeeForm((f) => ({ ...f, email: e.target.value }))} />
-                </div>
-
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <div style={miniLabel}>العنوان</div>
-                  <input style={input} value={employeeForm.address} onChange={(e) => setEmployeeForm((f) => ({ ...f, address: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>المنطقة</div>
-                  <input style={input} value={employeeForm.area} onChange={(e) => setEmployeeForm((f) => ({ ...f, area: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>رخصة سواقة</div>
-                  <select style={input} value={employeeForm.hasDrivingLicense} onChange={(e) => setEmployeeForm((f) => ({ ...f, hasDrivingLicense: e.target.value }))}>
-                    <option value="لا">لا</option>
-                    <option value="نعم">نعم</option>
-                  </select>
-                </div>
-
-                <div style={{ gridColumn: "1 / -1", borderTop: "1px dashed #e5e7eb", paddingTop: 10, marginTop: 4 }} />
-
-                <div>
-                  <div style={miniLabel}>المسمّى الوظيفي</div>
-                  <input style={input} value={employeeForm.jobTitle} onChange={(e) => setEmployeeForm((f) => ({ ...f, jobTitle: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>أعلى شهادة</div>
-                  <input style={input} value={employeeForm.topEducation} onChange={(e) => setEmployeeForm((f) => ({ ...f, topEducation: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>تاريخ التوظيف</div>
-                  <input style={input} type="date" value={employeeForm.hireDate} onChange={(e) => setEmployeeForm((f) => ({ ...f, hireDate: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>نوع العمل</div>
-                  <select style={input} value={employeeForm.employmentType} onChange={(e) => setEmployeeForm((f) => ({ ...f, employmentType: e.target.value }))}>
-                    {["دوام", "بالطلب", "عقد", "تدريب", "فترة تجريبية"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div style={miniLabel}>مستوى الخبرة</div>
-                  <input style={input} value={employeeForm.experienceLevel} onChange={(e) => setEmployeeForm((f) => ({ ...f, experienceLevel: e.target.value }))} />
-                </div>
-
-                <div>
-                  <div style={miniLabel}>سنين العمل</div>
-                  <input style={input} value={employeeForm.yearsOfWork} onChange={(e) => setEmployeeForm((f) => ({ ...f, yearsOfWork: e.target.value }))} />
-                </div>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                <button type="button" style={btnGhost} onClick={() => setEmployeeModalOpen(false)}>إلغاء</button>
-                <button type="submit" style={btnPrimary}>حفظ</button>
-              </div>
-            </form>
+            <div>
+              <Field label="هوية الموظف *">
+                <input style={input} value={employeeForm.nationalId} onChange={(e) => setEmployeeForm((f) => ({ ...f, nationalId: e.target.value }))} />
+              </Field>
+            </div>
+            <div>
+              <Field label="رقم هاتف الموظف *">
+                <input style={input} value={employeeForm.phone} onChange={(e) => setEmployeeForm((f) => ({ ...f, phone: e.target.value }))} />
+              </Field>
+            </div>
+            <div>
+              <Field label="رقم هاتف احتياطي">
+                <input style={input} value={employeeForm.phone2} onChange={(e) => setEmployeeForm((f) => ({ ...f, phone2: e.target.value }))} />
+              </Field>
+            </div>
+            <div>
+              <Field label="واتساب الموظف">
+                <input style={input} value={employeeForm.whatsapp} onChange={(e) => setEmployeeForm((f) => ({ ...f, whatsapp: e.target.value }))} />
+              </Field>
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Field label="بريد إلكتروني (اختياري)">
+                <input style={input} value={employeeForm.email} onChange={(e) => setEmployeeForm((f) => ({ ...f, email: e.target.value }))} />
+              </Field>
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Field label="العنوان">
+                <input style={input} value={employeeForm.address} onChange={(e) => setEmployeeForm((f) => ({ ...f, address: e.target.value }))} />
+              </Field>
+            </div>
+            <div>
+              <Field label="المنطقة">
+                <input style={input} value={employeeForm.area} onChange={(e) => setEmployeeForm((f) => ({ ...f, area: e.target.value }))} />
+              </Field>
+            </div>
+            <div>
+              <Field label="رخصة سواقة">
+                <select style={input} value={employeeForm.hasDrivingLicense} onChange={(e) => setEmployeeForm((f) => ({ ...f, hasDrivingLicense: e.target.value }))}>
+                  <option value="لا">لا</option>
+                  <option value="نعم">نعم</option>
+                </select>
+              </Field>
+            </div>
+            <div style={{ gridColumn: "1 / -1", borderTop: "1px dashed #e5e7eb", paddingTop: 10, marginTop: 4 }} />
+            <div>
+              <Field label="المسمّى الوظيفي">
+                <input style={input} value={employeeForm.jobTitle} onChange={(e) => setEmployeeForm((f) => ({ ...f, jobTitle: e.target.value }))} />
+              </Field>
+            </div>
+            <div>
+              <Field label="أعلى شهادة">
+                <input style={input} value={employeeForm.topEducation} onChange={(e) => setEmployeeForm((f) => ({ ...f, topEducation: e.target.value }))} />
+              </Field>
+            </div>
+            <div>
+              <Field label="تاريخ التوظيف">
+                <input style={input} type="date" value={employeeForm.hireDate} onChange={(e) => setEmployeeForm((f) => ({ ...f, hireDate: e.target.value }))} />
+              </Field>
+            </div>
+            <div>
+              <Field label="نوع العمل">
+                <select style={input} value={employeeForm.employmentType} onChange={(e) => setEmployeeForm((f) => ({ ...f, employmentType: e.target.value }))}>
+                  {["دوام", "بالطلب", "عقد", "تدريب", "فترة تجريبية"].map((x) => (
+                    <option key={x} value={x}>{x}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <div>
+              <Field label="مستوى الخبرة">
+                <input style={input} value={employeeForm.experienceLevel} onChange={(e) => setEmployeeForm((f) => ({ ...f, experienceLevel: e.target.value }))} />
+              </Field>
+            </div>
+            <div>
+              <Field label="سنين العمل">
+                <input style={input} value={employeeForm.yearsOfWork} onChange={(e) => setEmployeeForm((f) => ({ ...f, yearsOfWork: e.target.value }))} />
+              </Field>
+            </div>
           </div>
-        </div>
-      )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <button type="button" style={btnGhost} onClick={() => setEmployeeModalOpen(false)}>إلغاء</button>
+            <button type="submit" style={btnPrimary} disabled={actionLoading}>حفظ</button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Payroll Modal */}
-      {payrollModalOpen && (
-        <div style={modalOverlay} onMouseDown={() => setPayrollModalOpen(false)}>
-          <div style={modalCard} onMouseDown={(e) => e.stopPropagation()}>
-            <div style={modalHeader}>
-              <div style={modalTitle}>إعدادات الموظف (الراتب)</div>
-              <button style={iconBtn} onClick={() => setPayrollModalOpen(false)}>✕</button>
-            </div>
-
-            <form onSubmit={savePayrollSettings} style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+      <Modal open={payrollModalOpen} onClose={() => setPayrollModalOpen(false)} title="إعدادات الموظف (الراتب)" style={modalCard}>
+        <form onSubmit={savePayrollSettings} style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
               <div style={grid2}>
                 <div style={{ gridColumn: "1 / -1" }}>
-                  <div style={miniLabel}>تفعيل الجدولة</div>
-                  <select style={input} value={payrollForm.enabled ? "on" : "off"} onChange={(e) => setPayrollForm((f) => ({ ...f, enabled: e.target.value === "on" }))}>
-                    <option value="on">مفعّل</option>
-                    <option value="off">موقوف</option>
-                  </select>
+                  <Field label="تفعيل الجدولة">
+                    <select style={input} value={payrollForm.enabled ? "on" : "off"} onChange={(e) => setPayrollForm((f) => ({ ...f, enabled: e.target.value === "on" }))}>
+                      <option value="on">مفعّل</option>
+                      <option value="off">موقوف</option>
+                    </select>
+                  </Field>
                 </div>
-
                 <div>
-                  <div style={miniLabel}>راتب الموظف</div>
-                  <input style={input} value={payrollForm.amount} onChange={(e) => setPayrollForm((f) => ({ ...f, amount: e.target.value }))} placeholder={`مثال: 1500 (${currency})`} />
+                  <Field label="راتب الموظف">
+                    <input style={input} value={payrollForm.amount} onChange={(e) => setPayrollForm((f) => ({ ...f, amount: e.target.value }))} placeholder={`مثال: 1500 (${currency})`} />
+                  </Field>
                 </div>
-
                 <div>
-                  <div style={miniLabel}>طريقة الدفع</div>
-                  <select style={input} value={payrollForm.paymentMethod} onChange={(e) => setPayrollForm((f) => ({ ...f, paymentMethod: e.target.value }))}>
-                    {PAYROLL_PAY_METHODS.map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
+                  <Field label="طريقة الدفع">
+                    <select style={input} value={payrollForm.paymentMethod} onChange={(e) => setPayrollForm((f) => ({ ...f, paymentMethod: e.target.value }))}>
+                      {PAYROLL_PAY_METHODS.map((x) => (
+                        <option key={x} value={x}>{x}</option>
+                      ))}
+                    </select>
+                  </Field>
                 </div>
-
                 <div>
-                  <div style={miniLabel}>نظام الدفع</div>
-                  <select style={input} value={payrollForm.paySystem} onChange={(e) => setPayrollForm((f) => ({ ...f, paySystem: e.target.value }))}>
-                    {PAYROLL_SYSTEMS.map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
+                  <Field label="نظام الدفع">
+                    <select style={input} value={payrollForm.paySystem} onChange={(e) => setPayrollForm((f) => ({ ...f, paySystem: e.target.value }))}>
+                      {PAYROLL_SYSTEMS.map((x) => (
+                        <option key={x} value={x}>{x}</option>
+                      ))}
+                    </select>
+                  </Field>
                 </div>
-
                 <div>
-                  <div style={miniLabel}>تاريخ البداية</div>
-                  <input style={input} type="date" value={payrollForm.startDate} onChange={(e) => setPayrollForm((f) => ({ ...f, startDate: e.target.value }))} />
+                  <Field label="تاريخ البداية">
+                    <input style={input} type="date" value={payrollForm.startDate} onChange={(e) => setPayrollForm((f) => ({ ...f, startDate: e.target.value }))} />
+                  </Field>
                 </div>
-
                 <div style={{ gridColumn: "1 / -1" }}>
-                  <div style={miniLabel}>ملاحظات</div>
-                  <input style={input} value={payrollForm.note} onChange={(e) => setPayrollForm((f) => ({ ...f, note: e.target.value }))} placeholder="اختياري..." />
+                  <Field label="ملاحظات">
+                    <input style={input} value={payrollForm.note} onChange={(e) => setPayrollForm((f) => ({ ...f, note: e.target.value }))} placeholder="اختياري..." />
+                  </Field>
                 </div>
 
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -936,20 +1113,11 @@ export default function EmployeesPage() {
                 <button type="submit" style={btnPrimary}>حفظ</button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Employee Invoice Modal */}
-      {invoiceModalOpen && (
-        <div style={modalOverlay} onMouseDown={() => setInvoiceModalOpen(false)}>
-          <div style={modalCard} onMouseDown={(e) => e.stopPropagation()}>
-            <div style={modalHeader}>
-              <div style={modalTitle}>فاتورة الموظف</div>
-              <button style={iconBtn} onClick={() => setInvoiceModalOpen(false)}>✕</button>
-            </div>
-
-            {(() => {
+      <Modal open={invoiceModalOpen} onClose={() => setInvoiceModalOpen(false)} title="فاتورة الموظف" style={modalCard}>
+        {(() => {
               const emp = employees.find((x) => x.id === invoiceEmployeeId);
               const empName = emp?.name || "—";
               return (
@@ -1000,65 +1168,31 @@ export default function EmployeesPage() {
 
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
                       <button type="button" style={btnGhost} onClick={() => setInvoiceModalOpen(false)}>إلغاء</button>
-                      <button type="submit" style={btnPrimary}>حفظ الفاتورة</button>
+                      <button type="submit" style={btnPrimary} disabled={actionLoading}>حفظ الفاتورة</button>
                     </div>
                   </form>
                 </>
               );
-            })()}
-          </div>
-        </div>
-      )}
+        })()}
+      </Modal>
     </div>
   );
 }
 
-/* ======================
-   Styles
-====================== */
-const pageWrap = { display: "flex", flexDirection: "column", gap: 14, height: "100%", overflowY: "auto", paddingBottom: 10 };
+/* Page-specific styles (rest from shared) */
 const topRow = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
-const h1 = { fontSize: 26, fontWeight: 900, color: "#111827" };
-
 const warnText = { marginTop: 10, fontSize: 12, color: "#b45309", fontWeight: 900, lineHeight: 1.7 };
-
-const ghostCard = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: "12px 14px", minWidth: 260 };
-const ghostTitle = { fontSize: 12, color: "#111827", fontWeight: 900 };
-const ghostText = { fontSize: 14, color: "#6b7280", marginTop: 6, lineHeight: 1.6, fontWeight: 900 };
-
-const filtersCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const ghostCard = { border: `1px solid ${theme.border}`, background: theme.surface, borderRadius: 18, padding: "12px 14px", minWidth: 260 };
+const ghostTitle = { fontSize: 12, color: theme.text, fontWeight: 900 };
+const ghostText = { fontSize: 14, color: theme.textMuted, marginTop: 6, lineHeight: 1.6, fontWeight: 900 };
+const filtersCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const filtersRow = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" };
-const miniLabel = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-
-const input = { padding: "10px 12px", borderRadius: 14, border: "1px solid #d1d5db", fontSize: 14, outline: "none", backgroundColor: "#ffffff", width: "100%", boxSizing: "border-box" };
-
-const sectionCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const sectionCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const sectionHeader = { display: "flex", justifyContent: "space-between", alignItems: "center" };
-const sectionTitle = { fontSize: 15, fontWeight: 900, color: "#111827" };
-const sectionHint = { fontSize: 12, fontWeight: 900, color: "#6b7280" };
-
-const emptyBox = { border: "1px dashed #e5e7eb", background: "#f9fafb", borderRadius: 18, padding: 14, fontSize: 13, color: "#6b7280", lineHeight: 1.7 };
+const sectionTitle = { fontSize: 15, fontWeight: 900, color: theme.text };
+const sectionHint = { fontSize: 12, fontWeight: 900, color: theme.textMuted };
 
 const list = { display: "flex", flexDirection: "column", gap: 10 };
-const cardRow = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
-
-const rowTitle = { fontSize: 15, fontWeight: 900, color: "#111827" };
-const meta = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: "#6b7280", lineHeight: 1.6 };
-
-const chip2 = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#111827", fontWeight: 900, fontSize: 12 };
-const chip = { padding: "6px 10px", borderRadius: 999, border: "1px solid #c7d2fe", background: "#eef2ff", color: "#3730a3", fontWeight: 900, fontSize: 12 };
-const chipIncome = { padding: "6px 10px", borderRadius: 999, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#065f46", fontWeight: 900, fontSize: 12 };
-const chipExpense = { padding: "6px 10px", borderRadius: 999, border: "1px solid #fecaca", background: "#fef2f2", color: "#991b1b", fontWeight: 900, fontSize: 12 };
-
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
-const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTiny = { padding: "8px 12px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnGhost = { padding: "10px 16px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-
-const modalOverlay = { position: "fixed", inset: 0, background: "rgba(17,24,39,0.35)", display: "flex", justifyContent: "center", alignItems: "center", padding: 16, zIndex: 999 };
-const modalCard = { width: "min(860px, 96vw)", maxHeight: "90vh", overflowY: "auto", background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", padding: 14 };
-const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 };
-const modalTitle = { fontSize: 16, fontWeight: 900, color: "#111827" };
-const iconBtn = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 12, padding: "8px 10px", cursor: "pointer", fontWeight: 900 };
-const grid2 = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 };
-const tinyNote = { fontSize: 12, color: "#6b7280", lineHeight: 1.7, marginTop: 6 };
+const cardRow = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const rowTitle = { fontSize: 15, fontWeight: 900, color: theme.text };
+const meta = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: theme.textMuted, lineHeight: 1.6 };

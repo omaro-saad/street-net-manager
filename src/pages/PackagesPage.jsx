@@ -1,8 +1,43 @@
 // src/pages/PackagesPage.jsx
 import { useEffect, useMemo, useState } from "react";
+import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import LoadingOverlay from "../components/LoadingOverlay.jsx";
 import { useData } from "../DataContext";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { useAlert } from "../contexts/AlertContext.jsx";
+import ReadOnlyBanner from "../components/ReadOnlyBanner.jsx";
+import {
+  READ_ONLY_MESSAGE,
+  isApiMode,
+  apiPackagesList,
+  apiPackagesAdd,
+  apiPackagesUpdate,
+  apiPackagesDelete,
+} from "../lib/api.js";
+import { getCachedPackages, setCachedPackages, invalidatePackages } from "../lib/apiCache.js";
+import LoadingLogo from "../components/LoadingLogo.jsx";
 import { safeArray, safeObj, nowMs, genId, fmtMoney } from "../utils/helpers.js";
 import { theme } from "../theme.js";
+import {
+  pageWrap,
+  input,
+  h1,
+  miniLabel,
+  btnPrimary,
+  btnTinyDanger,
+  btnTiny,
+  btnGhost,
+  iconBtn,
+  modalOverlay,
+  modalCard,
+  modalHeader,
+  modalTitle,
+  chip,
+  emptyBox,
+  tinyNote,
+  contentCenterWrap,
+} from "../styles/shared.js";
 
 function toNum(x) {
   const s = String(x ?? "").trim().replace(",", ".");
@@ -185,15 +220,41 @@ function normalizePkg(p) {
    Page
    ========================= */
 export default function PackagesPage() {
-  const { gate } = useData();
+  const { gate, setData } = useData();
+  const { token } = useAuth();
+  const usePackagesApi = isApiMode() && !!token;
 
   const [pageTab, setPageTab] = useState("subscriber");
   const [all, setAll] = useState([]);
-
+  const [packagesLoading, setPackagesLoading] = useState(false);
   const [dbErr, setDbErr] = useState("");
 
   const loadAll = async () => {
     try {
+      if (usePackagesApi && token) {
+        const cached = getCachedPackages();
+        if (cached != null) {
+          setAll(cached);
+          setPackagesLoading(false);
+          return;
+        }
+        setPackagesLoading(true);
+        const res = await apiPackagesList(token);
+        if (!res.ok) {
+          setAll([]);
+          setDbErr(res.error || "فشل جلب الباقات");
+          setPackagesLoading(false);
+          return;
+        }
+        const next = safeArray(res.data)
+          .map(normalizePkg)
+          .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+        setAll(next);
+        setCachedPackages(next);
+        setPackagesLoading(false);
+        setDbErr("");
+        return;
+      }
       if (!gate?.packages?.isReady || typeof gate.packages.list !== "function") {
         setAll([]);
         setDbErr("packages.list غير متوفر (Gate غير جاهز)");
@@ -209,6 +270,7 @@ export default function PackagesPage() {
     } catch (e) {
       setAll([]);
       setDbErr(String(e?.message || e || "Packages error"));
+      setPackagesLoading(false);
     }
   };
 
@@ -216,17 +278,40 @@ export default function PackagesPage() {
     loadAll();
     let off = null;
     try {
-      if (gate?.packages?.onChanged) off = gate.packages.onChanged(() => loadAll());
+      if (!usePackagesApi && gate?.packages?.onChanged) off = gate.packages.onChanged(() => loadAll());
     } catch {}
     return () => {
       try {
         if (typeof off === "function") off();
       } catch {}
     };
+    // Only re-run when API mode or token changes; avoid re-running when gate reference changes (gate is recreated on every data change)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gate]);
+  }, [usePackagesApi, token]);
+
+  // Sync API packages into DataContext so SubscribersPage, DistributorsPage can read them
+  useEffect(() => {
+    if (!usePackagesApi || typeof setData !== "function") return;
+    setData((prev) => ({
+      ...prev,
+      packages: { items: all },
+      updatedAt: nowMs(),
+    }));
+  }, [usePackagesApi, all, setData]);
 
   const list = useMemo(() => all.filter((x) => x.target === pageTab), [all, pageTab]);
+
+  const { getLimit, canWrite } = useAuth();
+  const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showSuccessAlert, showConfirmAlert } = useAlert();
+  const packagesSubscriberLimit = getLimit("packagesSubscriber");
+  const packagesDistributorLimit = getLimit("packagesDistributor");
+  const packagesSubscriberCount = all.filter((x) => x.target === "subscriber").length;
+  const packagesDistributorCount = all.filter((x) => x.target === "distributor").length;
+  const packagesSubscriberAtLimit = packagesSubscriberLimit != null && packagesSubscriberCount >= packagesSubscriberLimit;
+  const packagesDistributorAtLimit = packagesDistributorLimit != null && packagesDistributorCount >= packagesDistributorLimit;
+  const addPackageAtLimit = pageTab === "subscriber" ? packagesSubscriberAtLimit : packagesDistributorAtLimit;
+  const canWritePackages = canWrite("packages");
+  const { execute, isLoading: actionLoading } = useAsyncAction({ minLoadingMs: 1000 });
 
   const [q, setQ] = useState("");
   const filtered = useMemo(() => {
@@ -367,9 +452,36 @@ export default function PackagesPage() {
   };
 
   const remove = async (id) => {
-    if (!window.confirm("حذف هذه الباقة؟")) return;
-    if (!gate?.packages?.isReady || typeof gate.packages.remove !== "function") return alert("packages.remove غير متوفر");
-    await gate.packages.remove(id);
+    if (!canWritePackages) return showReadOnlyAlert();
+    if (usePackagesApi && token) {
+      showConfirmAlert({
+        message: "حذف هذه الباقة؟",
+        confirmLabel: "حذف",
+        onConfirm: () => {
+          execute(async () => {
+            const res = await apiPackagesDelete(token, id);
+            if (!res.ok) return showErrorAlert(res.error || "فشل حذف الباقة.");
+            setAll((prev) => prev.filter((p) => String(p.id) !== String(id)));
+            invalidatePackages();
+          });
+        },
+      });
+      return;
+    }
+    if (!gate?.packages?.isReady || typeof gate.packages.remove !== "function") {
+      showErrorAlert("packages.remove غير متوفر");
+      return;
+    }
+    showConfirmAlert({
+      message: "حذف هذه الباقة؟",
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        execute(async () => {
+          await gate.packages.remove(id);
+          await loadAll();
+        });
+      },
+    });
   };
 
   const buildValidityFromForm = ({ mode, preset, manualDays }) => {
@@ -389,10 +501,53 @@ export default function PackagesPage() {
     const target = form.target === "distributor" ? "distributor" : "subscriber";
     const active = form.active === "on";
 
-    if (!gate?.packages?.isReady || typeof gate.packages.upsert !== "function") return alert("packages.upsert غير متوفر");
+    if (!canWritePackages) {
+      showReadOnlyAlert();
+      return;
+    }
+    if (!editingId) {
+      if (target === "subscriber" && packagesSubscriberAtLimit) {
+        showPlanLimitAlert();
+        return;
+      }
+      if (target === "distributor" && packagesDistributorAtLimit) {
+        showPlanLimitAlert();
+        return;
+      }
+    }
 
     const id = editingId ? editingId : genId("pkg");
     const createdAt = editingId ? (all.find((x) => String(x.id) === String(id))?.createdAt || nowMs()) : nowMs();
+
+    const upsertViaApi = async (row) => {
+      if (!usePackagesApi || !token) return false;
+      if (editingId) {
+        const res = await apiPackagesUpdate(token, id, row);
+        if (!res.ok) {
+          showErrorAlert(res.error || "فشل تحديث الباقة.");
+          return true;
+        }
+        if (res.data) {
+          const next = normalizePkg(res.data);
+          setAll((prev) => prev.map((p) => (String(p.id) === String(id) ? next : p)));
+          invalidatePackages();
+        }
+      } else {
+        const res = await apiPackagesAdd(token, row);
+        if (!res.ok) {
+          showErrorAlert(res.error || "فشل إضافة الباقة.");
+          return true;
+        }
+        if (res.data) {
+          const next = normalizePkg(res.data);
+          setAll((prev) => [next, ...prev].sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)));
+          invalidatePackages();
+        }
+      }
+      setOpen(false);
+      setEditingId(null);
+      return true;
+    };
 
     if (target === "subscriber") {
       const type = SUB_TYPES.some((t) => t.key === form.type) ? form.type : "time";
@@ -400,20 +555,20 @@ export default function PackagesPage() {
       const price = toNum(form.price);
       const speed = String(form.speed || "").trim();
 
-      if (!name) return alert("اسم باقة المشترك مطلوب.");
-      if (price === null || price < 0) return alert("سعر الباقة لازم يكون رقم صحيح (0 أو أكثر).");
-      if (!speed) return alert("سرعة الباقة مطلوبة.");
+      if (!name) return showValidationAlert("اسم باقة المشترك مطلوب.", "اسم الباقة");
+      if (price === null || price < 0) return showValidationAlert("سعر الباقة لازم يكون رقم صحيح (0 أو أكثر).", "السعر");
+      if (!speed) return showValidationAlert("سرعة الباقة مطلوبة.", "السرعة");
 
       const timeV = buildValidityFromForm({
         mode: form.timeValidityMode,
         preset: form.timeValidityPreset,
         manualDays: form.timeValidityManualDays,
       });
-      if (timeV.error) return alert(timeV.error);
+      if (timeV.error) return showValidationAlert(timeV.error, "الصلاحية");
 
       const usageText = String(form.usageText || "").trim();
       if (type === "usage" && !usageText) {
-        return alert("اكتب الاستهلاك/السحب كنص واضح (مثال: 700 ميجا).");
+        return showValidationAlert("اكتب الاستهلاك/السحب كنص واضح (مثال: 700 ميجا).", "نص الاستهلاك");
       }
 
       const usageValidityEnabled = form.usageValidityEnabled === "on";
@@ -424,7 +579,7 @@ export default function PackagesPage() {
           preset: form.usageValidityPreset,
           manualDays: form.usageValidityManualDays,
         });
-        if (usageV.error) return alert(`صلاحية الاستهلاك: ${usageV.error}`);
+        if (usageV.error) return showValidationAlert(`صلاحية الاستهلاك: ${usageV.error}`, "صلاحية الاستهلاك");
       } else {
         usageV = { mode: "preset", preset: "unlimited", days: null, manualDays: "" };
       }
@@ -453,10 +608,13 @@ export default function PackagesPage() {
         note,
       });
 
-      await gate.packages.upsert(row);
-
-      setOpen(false);
-      setEditingId(null);
+      await execute(async () => {
+        if (await upsertViaApi(row)) return;
+        if (!gate?.packages?.isReady || typeof gate.packages.upsert !== "function") return showErrorAlert("packages.upsert غير متوفر");
+        await gate.packages.upsert(row);
+        setOpen(false);
+        setEditingId(null);
+      });
       return;
     }
 
@@ -470,12 +628,12 @@ export default function PackagesPage() {
     const cardPrice = toNum(form.cardPrice);
     const note = String(form.note || "").trim();
 
-    if (!name) return alert("اسم باقة الموزع مطلوب.");
-    if (!paymentMethod) return alert("اختر آلية الدفع.");
-    if (!packageType) return alert("اختر نوع الباقة.");
-    if (!cardSpeed) return alert("اكتب سرعة البطاقة.");
-    if (!cardValidity) return alert("اكتب صلاحية البطاقة.");
-    if (cardPrice === null || cardPrice < 0) return alert("سعر البطاقة لازم يكون رقم صحيح (0 أو أكثر).");
+    if (!name) return showValidationAlert("اسم باقة الموزع مطلوب.", "اسم الباقة");
+    if (!paymentMethod) return showValidationAlert("اختر آلية الدفع.", "آلية الدفع");
+    if (!packageType) return showValidationAlert("اختر نوع الباقة.", "نوع الباقة");
+    if (!cardSpeed) return showValidationAlert("اكتب سرعة البطاقة.", "سرعة البطاقة");
+    if (!cardValidity) return showValidationAlert("اكتب صلاحية البطاقة.", "صلاحية البطاقة");
+    if (cardPrice === null || cardPrice < 0) return showValidationAlert("سعر البطاقة لازم يكون رقم صحيح (0 أو أكثر).", "سعر البطاقة");
 
     const row = normalizePkg({
       id,
@@ -491,10 +649,13 @@ export default function PackagesPage() {
       note,
     });
 
-    await gate.packages.upsert(row);
-
-    setOpen(false);
-    setEditingId(null);
+    await execute(async () => {
+      if (await upsertViaApi(row)) return;
+      if (!gate?.packages?.isReady || typeof gate.packages.upsert !== "function") return showErrorAlert("packages.upsert غير متوفر");
+      await gate.packages.upsert(row);
+      setOpen(false);
+      setEditingId(null);
+    });
   };
 
   /* =========================
@@ -502,16 +663,17 @@ export default function PackagesPage() {
      ========================= */
   const generateInvoicesForPackage = async (pkg) => {
     const x = normalizePkg(pkg);
-    if (!x?.id) return alert("الباقة غير صالحة.");
+    if (!x?.id) return showErrorAlert("الباقة غير صالحة.");
 
     if (!gate?.invoices?.isReady || typeof gate.invoices.appendMany !== "function") {
-      return alert("invoices.appendMany غير متوفر (Gate invoices غير جاهز)");
+      return showErrorAlert("invoices.appendMany غير متوفر (Gate invoices غير جاهز)");
     }
 
+    await execute(async () => {
     // NOTE: هذا “إرسال” بالمعنى المنطقي داخل التطبيق: إضافة فواتير للـ Context
     if (x.target === "subscriber") {
       const subs = (await gate.subscribers.list()) || [];
-      if (safeArray(subs).length === 0) return alert("ما في مشتركين حالياً لتوليد فواتير.");
+      if (safeArray(subs).length === 0) return showErrorAlert("ما في مشتركين حالياً لتوليد فواتير.");
 
       const rows = safeArray(subs).map((s) => {
         const sid = String(s?.id || "");
@@ -537,13 +699,13 @@ export default function PackagesPage() {
       });
 
       await gate.invoices.appendMany("subscriber", rows);
-      alert(`✅ تم توليد ${rows.length} فاتورة للمشتركين (In-Memory)`);
+      showSuccessAlert(`تم توليد ${rows.length} فاتورة للمشتركين`);
       return;
     }
 
     // distributor
     const dists = (await gate.distributors.list()) || [];
-    if (safeArray(dists).length === 0) return alert("ما في موزعين حالياً لتوليد فواتير.");
+    if (safeArray(dists).length === 0) return showErrorAlert("ما في موزعين حالياً لتوليد فواتير.");
 
     const rows = safeArray(dists).map((d) => {
       const did = String(d?.id || "");
@@ -567,12 +729,26 @@ export default function PackagesPage() {
     });
 
     await gate.invoices.appendMany("distributor", rows);
-    alert(`✅ تم توليد ${rows.length} فاتورة للموزعين (In-Memory)`);
+    showSuccessAlert(`تم توليد ${rows.length} فاتورة للموزعين`);
+    });
   };
 
   // ===== Render =====
+  const displayLoading = useMinLoadingTime(usePackagesApi && packagesLoading && all.length === 0);
+  if (displayLoading) {
+    return (
+      <div style={pageWrap}>
+        <div style={contentCenterWrap}>
+          <LoadingLogo />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={pageWrap}>
+      <LoadingOverlay visible={actionLoading} />
+      {!canWritePackages && <ReadOnlyBanner />}
       <div style={topRow}>
         <div>
           <h1 style={h1}>الحزم والباقات</h1>
@@ -597,7 +773,12 @@ export default function PackagesPage() {
         </div>
 
         <div style={tabsLeft}>
-          <button style={tabBtnSpecial(true)} onClick={openAdd}>
+          <button
+            style={tabBtnSpecial(true)}
+            onClick={() => { if (addPackageAtLimit) { showPlanLimitAlert(); return; } openAdd(); }}
+            disabled={!canWritePackages || actionLoading}
+            title={!canWritePackages ? READ_ONLY_MESSAGE : undefined}
+          >
             + إضافة باقة
           </button>
         </div>
@@ -619,7 +800,9 @@ export default function PackagesPage() {
         </div>
 
         {filtered.length === 0 ? (
-          <div style={emptyBox}>لا يوجد عروض بعد. اضغط “إضافة باقة”.</div>
+          <div style={contentCenterWrap}>
+            <div style={emptyBox}>لا يوجد عروض بعد. اضغط “إضافة باقة”.</div>
+          </div>
         ) : (
           <div style={cardsGrid}>
             {filtered.map((x) => {
@@ -640,7 +823,7 @@ export default function PackagesPage() {
                     <div style={cardTitleWrap}>
                       <div style={cardTitle}>{x.name || "—"}</div>
                       <div style={cardBadgeRow}>
-                        <span style={chip2}>{badge}</span>
+                        <span style={chip}>{badge}</span>
                         <span style={x.active ? chipApproved : chipPending}>{x.active ? "مفعّلة" : "موقوفة"}</span>
                       </div>
                     </div>
@@ -658,13 +841,13 @@ export default function PackagesPage() {
                   </div>
 
                   <div style={cardActions}>
-                    <button style={btnTiny} onClick={() => openEdit(x)}>
+                    <button style={btnTiny} onClick={() => openEdit(x)} disabled={!canWritePackages || actionLoading} title={!canWritePackages ? READ_ONLY_MESSAGE : undefined}>
                       تعديل
                     </button>
-                    <button style={btnTiny} onClick={() => generateInvoicesForPackage(x)} title="توليد فواتير حسب نوع الباقة للموجودين حالياً">
+                    <button style={btnTiny} onClick={() => generateInvoicesForPackage(x)} disabled={!canWritePackages || actionLoading} title={!canWritePackages ? READ_ONLY_MESSAGE : undefined}>
                       توليد فواتير
                     </button>
-                    <button style={btnTinyDanger} onClick={() => remove(x.id)}>
+                    <button style={btnTinyDanger} onClick={() => remove(x.id)} disabled={!canWritePackages || actionLoading} title={!canWritePackages ? READ_ONLY_MESSAGE : undefined}>
                       حذف
                     </button>
                   </div>
@@ -898,10 +1081,10 @@ export default function PackagesPage() {
                 )}
 
                 <div style={modalActionsSticky}>
-                  <button type="button" style={btnGhost} onClick={() => setOpen(false)}>
+                  <button type="button" style={btnGhost} onClick={() => setOpen(false)} disabled={actionLoading}>
                     إلغاء
                   </button>
-                  <button type="submit" style={btnPrimary}>
+                  <button type="submit" style={btnPrimary} disabled={actionLoading}>
                     حفظ
                   </button>
                 </div>
@@ -917,27 +1100,26 @@ export default function PackagesPage() {
 /* =========================
    Styles
    ========================= */
-const pageWrap = { display: "flex", flexDirection: "column", gap: 14, height: "100%", overflowY: "auto", paddingBottom: 10 };
+/* ===== Page-specific styles (shared tokens imported above) ===== */
 const topRow = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
-const h1 = { fontSize: 26, fontWeight: 900, color: "#111827" };
-const hint = { fontSize: 12, color: "#6b7280", fontWeight: 900, marginTop: 6, lineHeight: 1.7 };
+const hint = { fontSize: 12, color: theme.textMuted, fontWeight: 900, marginTop: 6, lineHeight: 1.7 };
 
 const warnBox = { marginTop: 10, border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 14, padding: 10, color: "#9a3412", fontWeight: 900, fontSize: 12, lineHeight: 1.7 };
 
-const ghostCard = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: "12px 14px", minWidth: 260 };
-const ghostTitle = { fontSize: 12, color: "#111827", fontWeight: 900 };
-const ghostText = { fontSize: 12, color: "#6b7280", marginTop: 6, lineHeight: 1.6 };
+const ghostCard = { border: `1px solid ${theme.border}`, background: theme.surface, borderRadius: 18, padding: "12px 14px", minWidth: 260 };
+const ghostTitle = { fontSize: 12, color: theme.text, fontWeight: 900 };
+const ghostText = { fontSize: 12, color: theme.textMuted, marginTop: 6, lineHeight: 1.6 };
 
-const tabsWrap = { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", border: "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: 10 };
+const tabsWrap = { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", border: `1px solid ${theme.border}`, background: theme.surface, borderRadius: 18, padding: 10 };
 const tabsRight = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" };
 const tabsLeft = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" };
 
 const tabBtn = (active) => ({
   padding: "10px 14px",
   borderRadius: 999,
-  border: active ? "none" : "1px solid #e5e7eb",
-  background: active ? theme.primary : "#fff",
-  color: active ? "#fff" : "#111827",
+  border: active ? "none" : `1px solid ${theme.border}`,
+  background: active ? (theme.primaryGradient || theme.primary) : theme.surface,
+  color: active ? "#fff" : theme.text,
   fontWeight: 900,
   cursor: "pointer",
   fontSize: 13,
@@ -947,65 +1129,46 @@ const tabBtnSpecial = (active) => ({
   padding: "10px 14px",
   borderRadius: 999,
   border: active ? "none" : `1px solid ${theme.primary}`,
-  background: active ? theme.primary : "#f5f3ff",
-  color: active ? "#fff" : "#4c1d95",
+  background: active ? (theme.primaryGradient || theme.primary) : theme.surfaceAlt,
+  color: active ? "#fff" : theme.primary,
   fontWeight: 900,
   cursor: "pointer",
   fontSize: 13,
   boxShadow: active ? "0 14px 34px rgba(139,92,246,0.25)" : "0 10px 24px rgba(15,23,42,0.06)",
 });
 
-const filtersCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const filtersCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const filtersRow = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" };
-const miniLabel = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
 
-const input = { padding: "10px 12px", borderRadius: 14, border: "1px solid #d1d5db", fontSize: 14, outline: "none", backgroundColor: "#ffffff", width: "100%", boxSizing: "border-box" };
-
-const sectionCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const sectionCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const sectionHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" };
-const sectionTitle = { fontSize: 15, fontWeight: 900, color: "#111827" };
-const sectionHint = { fontSize: 12, fontWeight: 900, color: "#6b7280" };
+const sectionTitle = { fontSize: 15, fontWeight: 900, color: theme.text };
+const sectionHint = { fontSize: 12, fontWeight: 900, color: theme.textMuted };
 
-const emptyBox = { border: "1px dashed #e5e7eb", background: "#f9fafb", borderRadius: 18, padding: 14, fontSize: 13, color: "#6b7280", lineHeight: 1.7 };
-
-const chip2 = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#111827", fontWeight: 900, fontSize: 12 };
 const chipPending = { padding: "6px 10px", borderRadius: 999, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", fontWeight: 900, fontSize: 12 };
 const chipApproved = { padding: "6px 10px", borderRadius: 999, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#065f46", fontWeight: 900, fontSize: 12 };
 
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
-const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTiny = { padding: "8px 12px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnGhost = { padding: "10px 16px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-
-const tinyNote = { fontSize: 12, color: "#6b7280", lineHeight: 1.7 };
-
 const cardsGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, alignItems: "stretch" };
 
-const card = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 12px 30px rgba(15,23,42,0.06)" };
+const card = { border: `1px solid ${theme.border}`, background: theme.surface, borderRadius: 18, padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 12px 30px rgba(15,23,42,0.06)" };
 
 const cardTop = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
 const cardTitleWrap = { display: "flex", flexDirection: "column", gap: 8 };
-const cardTitle = { fontSize: 16, fontWeight: 900, color: "#111827" };
+const cardTitle = { fontSize: 16, fontWeight: 900, color: theme.text };
 const cardBadgeRow = { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" };
 
-const cardPrice = { fontSize: 13, fontWeight: 900, color: "#111827", padding: "8px 10px", borderRadius: 14, border: "1px solid #e5e7eb", background: "#f9fafb" };
+const cardPrice = { fontSize: 13, fontWeight: 900, color: theme.text, padding: "8px 10px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.surfaceAlt };
 const cardBody = { display: "flex", flexDirection: "column", gap: 6, flex: 1 };
-const cardLine = { fontSize: 12, color: "#374151", lineHeight: 1.7 };
-const cardNote = { fontSize: 12, color: "#6b7280", lineHeight: 1.7, marginTop: 4 };
+const cardLine = { fontSize: 12, color: theme.text, lineHeight: 1.7 };
+const cardNote = { fontSize: 12, color: theme.textMuted, lineHeight: 1.7, marginTop: 4 };
 
 const cardActions = { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" };
 
-const modalOverlay = { position: "fixed", inset: 0, background: "rgba(17,24,39,0.35)", display: "flex", justifyContent: "center", alignItems: "center", padding: 16, zIndex: 999 };
-const modalCard = { width: "min(920px, 96vw)", background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", padding: 14, maxHeight: "92vh", display: "flex", flexDirection: "column" };
-const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 };
-const modalTitle = { fontSize: 16, fontWeight: 900, color: "#111827" };
-const iconBtn = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 12, padding: "8px 10px", cursor: "pointer", fontWeight: 900 };
-
 const modalScroll = { overflowY: "auto", paddingRight: 6, paddingBottom: 10 };
 
-const modalActionsSticky = { position: "sticky", bottom: 0, background: "#fff", paddingTop: 10, marginTop: 6, borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "flex-end", gap: 10 };
+const modalActionsSticky = { position: "sticky", bottom: 0, background: theme.surface, paddingTop: 10, marginTop: 6, borderTop: `1px solid ${theme.border}`, display: "flex", justifyContent: "flex-end", gap: 10 };
 
-const selectorBlockFull = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const selectorBlockFull = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 
 const segRow = { display: "flex", gap: 10, flexWrap: "wrap" };
 const segRowWrap = { display: "flex", gap: 10, flexWrap: "wrap" };
@@ -1015,9 +1178,9 @@ const segBtn = (active) => ({
   minWidth: 160,
   padding: "10px 12px",
   borderRadius: 14,
-  border: active ? "none" : "1px solid #e5e7eb",
-  background: active ? theme.primary : "#fff",
-  color: active ? "#fff" : "#111827",
+  border: active ? "none" : `1px solid ${theme.border}`,
+  background: active ? (theme.primaryGradient || theme.primary) : theme.surface,
+  color: active ? "#fff" : theme.text,
   fontWeight: 900,
   cursor: "pointer",
   fontSize: 13,
@@ -1027,9 +1190,9 @@ const segBtn = (active) => ({
 const segBtnSmall = (active) => ({
   padding: "9px 12px",
   borderRadius: 14,
-  border: active ? "none" : "1px solid #e5e7eb",
-  background: active ? theme.primary : "#fff",
-  color: active ? "#fff" : "#111827",
+  border: active ? "none" : `1px solid ${theme.border}`,
+  background: active ? (theme.primaryGradient || theme.primary) : theme.surface,
+  color: active ? "#fff" : theme.text,
   fontWeight: 900,
   cursor: "pointer",
   fontSize: 12,

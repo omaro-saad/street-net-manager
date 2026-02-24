@@ -29,12 +29,6 @@ const api = Object.freeze({
     onChanged: makeOnChanged("settings:changed"),
   },
 
-  license: {
-    getDeviceCode: () => invokeSafe("license:getDeviceCode"),
-    check: () => invokeSafe("license:check"),
-    activate: (licenseObj) => invokeSafe("license:activate", licenseObj),
-  },
-
   subscribers: {
     list: () => invokeSafe("subscribers:list"),
     add: (row) => invokeSafe("subscribers:add", row),

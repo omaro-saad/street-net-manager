@@ -1,6 +1,24 @@
 // src/pages/SubscribersPage.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useData } from "../DataContext";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { useAlert } from "../contexts/AlertContext.jsx";
+import ReadOnlyBanner from "../components/ReadOnlyBanner.jsx";
+import LoadingLogo from "../components/LoadingLogo.jsx";
+import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import LoadingOverlay from "../components/LoadingOverlay.jsx";
+import {
+  PLAN_LIMIT_MESSAGE,
+  READ_ONLY_MESSAGE,
+  isApiMode,
+  apiSubscribersList,
+  apiSubscribersAdd,
+  apiSubscribersUpdate,
+  apiSubscribersDelete,
+  apiFinancePut,
+} from "../lib/api.js";
+import { getCachedSubscribers, setCachedSubscribers, invalidateSubscribers } from "../lib/apiCache.js";
 import {
   safeArray,
   safeObj,
@@ -20,6 +38,29 @@ import {
 import { normalizeLineRow } from "../utils/lineShape.js";
 import { theme } from "../theme.js";
 import { useResponsive } from "../hooks/useResponsive.js";
+import {
+  pageWrap,
+  input,
+  btnPrimary,
+  btnTinyDanger,
+  btnTiny,
+  btnTinyPrimary,
+  btnGhost,
+  iconBtn,
+  miniLabel,
+  modalOverlay,
+  modalCard,
+  modalHeader,
+  modalTitle,
+  chip,
+  chipPrimary,
+  chipIncome,
+  chipExpense,
+  h1,
+  textMuted,
+  emptyBox,
+  contentCenterWrap,
+} from "../styles/shared.js";
 
 const LS_LAST_SUB_SERVICE_ID = "subscribers:lastServiceId";
 
@@ -146,15 +187,54 @@ function calcExpiresAt(startAtMs, svc) {
 
 export default function SubscribersPage() {
   const ctx = useData();
+  const { isAtLimit, canWrite, token } = useAuth();
+  const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showConfirmAlert } = useAlert();
+  const subscribersAtLimit = isAtLimit("subscribers", "subscribers");
+  const canWriteSubscribers = canWrite("subscribers");
   const data = ctx?.data;
   const setData = ctx?.setData;
   const gate = ctx?.gate;
+
+  const useSubscribersApi = isApiMode() && !!token;
+  const [subscribersFromApi, setSubscribersFromApi] = useState([]);
+  const [subscribersApiLoading, setSubscribersApiLoading] = useState(false);
+  const { execute, isLoading: actionLoading } = useAsyncAction({ minLoadingMs: 1000 });
+
+  const loadSubscribersApi = useCallback(async () => {
+    if (!useSubscribersApi || !token) return;
+    const cached = getCachedSubscribers();
+    if (cached != null) {
+      setSubscribersFromApi(cached);
+      return;
+    }
+    setSubscribersApiLoading(true);
+    try {
+      const res = await apiSubscribersList(token);
+      if (res.ok && Array.isArray(res.data)) {
+        setSubscribersFromApi(res.data);
+        setCachedSubscribers(res.data);
+      } else setSubscribersFromApi([]);
+    } catch {
+      setSubscribersFromApi([]);
+    } finally {
+      setSubscribersApiLoading(false);
+    }
+  }, [useSubscribersApi, token]);
+
+  useEffect(() => {
+    if (useSubscribersApi) loadSubscribersApi();
+  }, [useSubscribersApi, loadSubscribersApi]);
+
+  useEffect(() => {
+    if (!useSubscribersApi || typeof setData !== "function") return;
+    setData((prev) => ({ ...prev, subscribers: subscribersFromApi, updatedAt: nowMs() }));
+  }, [useSubscribersApi, subscribersFromApi, setData]);
 
   // ✅ currency
   const currency = gate?.financeDb?.settings?.get?.()?.currency || data?.finance?.pricing?.defaultCurrency || "₪";
 
   // ======================
-  // Local Source of Truth (NO DB)
+  // Local Source of Truth (NO DB) or from API
   // ======================
   const lines = useMemo(() => {
     const raw = data?.lines?.items ?? data?.lines ?? [];
@@ -170,9 +250,10 @@ export default function SubscribersPage() {
   }, [data?.packages]);
 
   const subscribersAll = useMemo(() => {
+    if (useSubscribersApi) return safeArray(subscribersFromApi).map(normalizeSubscriberRow).filter(Boolean);
     const raw = data?.subscribers ?? [];
     return safeArray(raw).map(normalizeSubscriberRow).filter(Boolean);
-  }, [data?.subscribers]);
+  }, [useSubscribersApi, subscribersFromApi, data?.subscribers]);
 
   // ======================
   // Computed status
@@ -448,6 +529,15 @@ export default function SubscribersPage() {
           };
         });
       }
+      // In API mode, persist finance (including new auto invoice) so FinancePage shows it
+      if (isApiMode() && token && data) {
+        const kv = safeObj(data?.finance?._kv);
+        const nextAuto = [autoInv, ...safeArray(kv.autoInvoices)];
+        const res = await apiFinancePut(token, { ...kv, autoInvoices: nextAuto });
+        if (res.ok && res.data && typeof setData === "function") {
+          setData((prev) => ({ ...prev, finance: { _kv: res.data }, updatedAt: nowMs() }));
+        }
+      }
     } catch (e) {
       console.warn("pushAutoInvoice failed:", e);
     }
@@ -476,7 +566,7 @@ export default function SubscribersPage() {
   // ======================
   const localUpsertSubscriber = (id, patch, { isNew } = { isNew: false }) => {
     if (typeof setData !== "function") {
-      alert("⚠️ لا يمكن الحفظ: setData غير متوفر في DataContext.");
+      showErrorAlert("لا يمكن الحفظ: setData غير متوفر في DataContext.");
       return false;
     }
 
@@ -516,7 +606,7 @@ export default function SubscribersPage() {
 
   const localRemoveSubscriber = (id) => {
     if (typeof setData !== "function") {
-      alert("⚠️ لا يمكن الحذف: setData غير متوفر في DataContext.");
+      showErrorAlert("لا يمكن الحذف: setData غير متوفر في DataContext.");
       return false;
     }
 
@@ -535,10 +625,11 @@ export default function SubscribersPage() {
 
   const saveSubscriber = async (e) => {
     e.preventDefault();
-
+    if (!canWriteSubscribers) return showReadOnlyAlert();
     const err = validateBeforeSave();
-    if (err) return alert(err);
+    if (err) return showValidationAlert(err);
 
+    await execute(async () => {
     const name = String(form.name || "").trim();
     const phone = String(form.phone || "").trim();
     const address1 = String(form.address1 || "").trim();
@@ -549,8 +640,8 @@ export default function SubscribersPage() {
     const service = services.find((s) => String(s.id) === String(form.serviceId)) || null;
     const line = lines.find((l) => String(l.id) === String(form.lineId)) || null;
 
-    if (!service) return alert("الباقة المختارة غير موجودة ضمن الحزم (Packages).");
-    if (!line) return alert("الخط المختار غير موجود ضمن الخطوط (Lines).");
+    if (!service) return showErrorAlert("الباقة المختارة غير موجودة ضمن الحزم (Packages).");
+    if (!line) return showErrorAlert("الخط المختار غير موجود ضمن الخطوط (Lines).");
 
     try {
       localStorage.setItem(LS_LAST_SUB_SERVICE_ID, String(form.serviceId || ""));
@@ -562,7 +653,7 @@ export default function SubscribersPage() {
     const total = Math.max(0, basePrice + extraFees - specialDiscount);
 
     const startAt = localDateToMs(form.startDate);
-    if (!startAt) return alert("تاريخ بدء الاشتراك غير صحيح.");
+    if (!startAt) return showValidationAlert("تاريخ بدء الاشتراك غير صحيح.", "تاريخ البدء");
 
     const generalNotes = String(form.generalNotes || "").trim();
 
@@ -627,8 +718,24 @@ export default function SubscribersPage() {
 
       const autoInv = createAutoInvoiceForSubscriber(sub, total, { service, line });
 
+      if (useSubscribersApi && token) {
+        const res = await apiSubscribersAdd(token, sub);
+        if (!res.ok) return showErrorAlert(res.error || "فشل إضافة المشترك.");
+        if (res.data) {
+          setSubscribersFromApi((prev) => [res.data, ...prev]);
+          invalidateSubscribers();
+        }
+        await pushAutoInvoiceEverywhere(autoInv);
+        setModalOpen(false);
+        setEditingId(null);
+        setRenewMode(false);
+        editingOriginalRef.current = null;
+        setForm({ ...emptyForm, startDate: todayISO(), serviceId: String(form.serviceId || "") });
+        return;
+      }
+
       const ok = localUpsertSubscriber(sub.id, sub, { isNew: true });
-      if (!ok) return alert("فشل الحفظ محليًا.");
+      if (!ok) return showErrorAlert("فشل الحفظ محليًا.");
 
       await pushAutoInvoiceEverywhere(autoInv);
 
@@ -680,8 +787,27 @@ export default function SubscribersPage() {
       status: "active",
     };
 
+    if (useSubscribersApi && token) {
+      const res = await apiSubscribersUpdate(token, editingId, patch);
+      if (!res.ok) return showErrorAlert(res.error || "فشل تحديث المشترك.");
+      if (res.data) {
+        setSubscribersFromApi((prev) => prev.map((s) => (String(s.id) === String(editingId) ? res.data : s)));
+        invalidateSubscribers();
+      }
+      if (shouldCreateInvoice) {
+        const updatedSub = { ...(editingOriginalRef.current || {}), id: editingId, ...patch };
+        const autoInv = createAutoInvoiceForSubscriber(updatedSub, total, { service, line });
+        await pushAutoInvoiceEverywhere(autoInv);
+      }
+      setModalOpen(false);
+      setEditingId(null);
+      setRenewMode(false);
+      editingOriginalRef.current = null;
+      return;
+    }
+
     const ok = localUpsertSubscriber(editingId, patch, { isNew: false });
-    if (!ok) return alert("فشل تعديل المشترك محليًا.");
+    if (!ok) return showErrorAlert("فشل تعديل المشترك محليًا.");
 
     if (shouldCreateInvoice) {
       const updatedSub = { ...(editingOriginalRef.current || {}), id: editingId, ...patch };
@@ -693,12 +819,28 @@ export default function SubscribersPage() {
     setEditingId(null);
     setRenewMode(false);
     editingOriginalRef.current = null;
+    });
   };
 
   const deleteSubscriber = async (id) => {
-    if (!window.confirm("حذف المشترك؟")) return;
-    const ok = localRemoveSubscriber(id);
-    if (!ok) alert("فشل الحذف محليًا.");
+    if (!canWriteSubscribers) return showReadOnlyAlert();
+    showConfirmAlert({
+      message: "حذف المشترك؟",
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        execute(async () => {
+          if (useSubscribersApi && token) {
+            const res = await apiSubscribersDelete(token, id);
+            if (!res.ok) return showErrorAlert(res.error || "فشل حذف المشترك.");
+            setSubscribersFromApi((prev) => prev.filter((s) => String(s.id) !== String(id)));
+            invalidateSubscribers();
+            return;
+          }
+          const ok = localRemoveSubscriber(id);
+          if (!ok) showErrorAlert("فشل الحذف محليًا.");
+        });
+      },
+    });
   };
 
   const previewTotal = useMemo(() => {
@@ -815,7 +957,7 @@ export default function SubscribersPage() {
 
   const chip2R = useMemo(
     () => ({
-      ...chip2,
+      ...chip,
       maxWidth: "100%",
       overflow: "hidden",
       textOverflow: "ellipsis",
@@ -845,8 +987,21 @@ export default function SubscribersPage() {
     [isMobile]
   );
 
+  const displayLoading = useMinLoadingTime(useSubscribersApi && subscribersApiLoading && subscribersFromApi.length === 0);
+  if (displayLoading) {
+    return (
+      <div style={pageWrapR}>
+        <div style={contentCenterWrap}>
+          <LoadingLogo />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={pageWrapR}>
+      <LoadingOverlay visible={actionLoading} />
+      {!canWriteSubscribers && <ReadOnlyBanner />}
       <div style={topRowR}>
         <div>
           <h1 style={{ ...h1, fontSize: isMobile ? 22 : 26 }}>المشتركين</h1>
@@ -870,7 +1025,12 @@ export default function SubscribersPage() {
 
       <div style={filtersCard}>
         <div style={filtersRowR}>
-          <button style={btnPrimaryR} onClick={openAdd} disabled={!depsOk}>
+          <button
+            style={btnPrimaryR}
+            onClick={openAdd}
+            disabled={!depsOk || subscribersAtLimit || !canWriteSubscribers || actionLoading}
+            title={!canWriteSubscribers ? READ_ONLY_MESSAGE : subscribersAtLimit ? PLAN_LIMIT_MESSAGE : undefined}
+          >
             + إضافة مشترك
           </button>
 
@@ -909,11 +1069,13 @@ export default function SubscribersPage() {
         </div>
 
         {list.length === 0 ? (
-          <div style={emptyBox}>لا يوجد مشتركين حسب الفلاتر الحالية.</div>
+          <div style={contentCenterWrap}>
+            <div style={emptyBox}>لا يوجد مشتركين حسب الفلاتر الحالية.</div>
+          </div>
         ) : (
           <div style={listWrap}>
             {list.map((s) => {
-              const statusPill = s.computedStatus === "active" ? pillGreen : s.computedStatus === "expired" ? pillRed : pillGray;
+              const statusPill = s.computedStatus === "active" ? chipIncome : s.computedStatus === "expired" ? chipExpense : pillGray;
 
               const registeredDate = s.registeredAt ? toLocalISODate(s.registeredAt) : "—";
               const startDate = s.startAt ? toLocalISODate(s.startAt) : "—";
@@ -973,19 +1135,19 @@ export default function SubscribersPage() {
                     <div style={actionsRowR}>
                       {s.computedStatus === "expired" ? (
                         <>
-                          <button style={btnTiny2} onClick={() => openRenew(s)}>
+                          <button style={btnTinyPrimary} onClick={() => openRenew(s)} disabled={!canWriteSubscribers || actionLoading} title={!canWriteSubscribers ? READ_ONLY_MESSAGE : undefined}>
                             تفعيل
                           </button>
-                          <button style={btnTinyDanger} onClick={() => deleteSubscriber(s.id)}>
+                          <button style={btnTinyDanger} onClick={() => deleteSubscriber(s.id)} disabled={!canWriteSubscribers || actionLoading} title={!canWriteSubscribers ? READ_ONLY_MESSAGE : undefined}>
                             حذف
                           </button>
                         </>
                       ) : (
                         <>
-                          <button style={btnTiny} onClick={() => openEdit(s)}>
+                          <button style={btnTiny} onClick={() => openEdit(s)} disabled={!canWriteSubscribers || actionLoading} title={!canWriteSubscribers ? READ_ONLY_MESSAGE : undefined}>
                             تعديل
                           </button>
-                          <button style={btnTinyDanger} onClick={() => deleteSubscriber(s.id)}>
+                          <button style={btnTinyDanger} onClick={() => deleteSubscriber(s.id)} disabled={!canWriteSubscribers || actionLoading} title={!canWriteSubscribers ? READ_ONLY_MESSAGE : undefined}>
                             حذف
                           </button>
                         </>
@@ -1091,7 +1253,7 @@ export default function SubscribersPage() {
                     <span style={badgeReq}>مطلوب</span>
                   </div>
 
-                  <div style={{ borderTop: "1px solid #e5e7eb", background: "#fff" }}>
+                  <div style={{ borderTop: `1px solid ${theme.border}`, background: theme.surface }}>
                     <div style={{ padding: 12 }}>
                       <div style={{ ...grid, gridTemplateColumns: isMobile ? "1fr" : gridCols }}>
                         <div style={{ gridColumn: "1 / -1" }}>
@@ -1135,7 +1297,7 @@ export default function SubscribersPage() {
                   <button type="button" style={btnGhostR} onClick={() => setModalOpen(false)}>
                     إلغاء
                   </button>
-                  <button type="submit" style={btnPrimaryR}>
+                  <button type="submit" style={btnPrimaryR} disabled={actionLoading}>
                     {editingId ? (renewMode ? "تفعيل وتجديد + فاتورة" : "حفظ التعديل") : "تفعيل الاشتراك"}
                   </button>
                 </div>
@@ -1196,95 +1358,64 @@ export default function SubscribersPage() {
 }
 
 /* ===== Styles ===== */
-const pageWrap = { display: "flex", flexDirection: "column", gap: 14, height: "100%", overflowY: "auto", paddingBottom: 10 };
+/* ===== Page-specific styles (shared tokens imported above) ===== */
 const topRow = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
-const h1 = { fontSize: 26, fontWeight: 900, color: "#111827" };
-const p = { fontSize: 14, color: "#6b7280", lineHeight: 1.7, maxWidth: 720 };
-
-const statCard = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: 12, minWidth: 320 };
-const statTitle = { fontSize: 12, fontWeight: 900, color: "#111827" };
+const statCard = { border: `1px solid ${theme.border}`, background: theme.surface, borderRadius: 18, padding: 12, minWidth: 320 };
+const statTitle = { fontSize: 12, fontWeight: 900, color: theme.text };
 const statRow = { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 };
-const statChip = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f9fafb", fontWeight: 900, fontSize: 12, color: "#111827" };
+const statChip = { padding: "6px 10px", borderRadius: 999, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, fontWeight: 900, fontSize: 12, color: theme.text };
 
-const filtersCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12 };
+const filtersCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12 };
 const filtersRow = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" };
 
-const miniLabel = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-const warnText = { marginTop: 10, fontSize: 12, color: "#b45309", fontWeight: 900, lineHeight: 1.7 };
-const tinyHint = { marginTop: 6, fontSize: 12, color: "#6b7280", lineHeight: 1.7 };
-
-const input = {
-  padding: "10px 12px",
-  borderRadius: 14,
-  border: "1px solid #d1d5db",
-  fontSize: 14,
-  outline: "none",
-  backgroundColor: "#ffffff",
-  width: "100%",
-  boxSizing: "border-box",
-};
+const warnText = { marginTop: 10, fontSize: 12, color: theme.warning, fontWeight: 900, lineHeight: 1.7 };
+const tinyHint = { marginTop: 6, fontSize: 12, color: theme.textMuted, lineHeight: 1.7 };
 
 const textarea = {
   padding: "10px 12px",
   borderRadius: 14,
-  border: "1px solid #d1d5db",
+  border: `1px solid ${theme.border}`,
   fontSize: 14,
   outline: "none",
-  backgroundColor: "#ffffff",
+  backgroundColor: theme.surface,
   width: "100%",
   boxSizing: "border-box",
   minHeight: 90,
   resize: "vertical",
   lineHeight: 1.7,
+  color: theme.text,
 };
 
-const sectionCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const sectionCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const sectionHeader = { display: "flex", justifyContent: "space-between", alignItems: "center" };
-const sectionTitle = { fontSize: 15, fontWeight: 900, color: "#111827" };
-const sectionHint = { fontSize: 12, fontWeight: 900, color: "#6b7280" };
+const sectionTitle = { fontSize: 15, fontWeight: 900, color: theme.text };
+const sectionHint = { fontSize: 12, fontWeight: 900, color: theme.textMuted };
 
-const emptyBox = { border: "1px dashed #e5e7eb", background: "#f9fafb", borderRadius: 18, padding: 14, fontSize: 13, color: "#6b7280", lineHeight: 1.7 };
 const listWrap = { display: "flex", flexDirection: "column", gap: 10 };
 
-const row = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" };
-const rowTitle = { fontSize: 15, fontWeight: 900, color: "#111827" };
-const meta = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: "#6b7280", lineHeight: 1.6 };
-const noteText = { fontSize: 12, color: "#6b7280", lineHeight: 1.7 };
+const row = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" };
+const rowTitle = { fontSize: 15, fontWeight: 900, color: theme.text };
+const meta = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: theme.textMuted, lineHeight: 1.6 };
+const noteText = { fontSize: 12, color: theme.textMuted, lineHeight: 1.7 };
 
-const chip2 = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#111827", fontWeight: 900, fontSize: 12 };
-const chip = { padding: "6px 10px", borderRadius: 999, border: "1px solid #c7d2fe", background: "#eef2ff", color: "#3730a3", fontWeight: 900, fontSize: 12 };
+const pillGray = { padding: "6px 10px", borderRadius: 999, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, color: theme.text, fontWeight: 900, fontSize: 12 };
 
-const pillGreen = { padding: "6px 10px", borderRadius: 999, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#065f46", fontWeight: 900, fontSize: 12 };
-const pillRed = { padding: "6px 10px", borderRadius: 999, border: "1px solid #fecaca", background: "#fef2f2", color: "#991b1b", fontWeight: 900, fontSize: 12 };
-const pillGray = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f3f4f6", color: "#374151", fontWeight: 900, fontSize: 12 };
-
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
-const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTiny = { padding: "8px 12px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTiny2 = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnGhost = { padding: "10px 16px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-
-const modalOverlay = { position: "fixed", inset: 0, background: "rgba(17,24,39,0.35)", display: "flex", justifyContent: "center", alignItems: "center", padding: 16, zIndex: 999 };
-const modalCard = { width: "min(920px, 96vw)", background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", padding: 14, maxHeight: "92vh", display: "flex", flexDirection: "column" };
-const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 };
-const modalTitle = { fontSize: 16, fontWeight: 900, color: "#111827" };
-const iconBtn = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 12, padding: "8px 10px", cursor: "pointer", fontWeight: 900 };
 const modalScrollArea = { overflowY: "auto", paddingRight: 2 };
 
 const grid = { display: "grid", gap: 12 };
 const svcRow = { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" };
 
-const advancedShell = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", overflow: "hidden" };
+const advancedShell = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, overflow: "hidden" };
 const advancedTop = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12 };
-const advancedTitle = { fontSize: 14, fontWeight: 900, color: "#111827" };
-const advancedSub = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
+const advancedTitle = { fontSize: 14, fontWeight: 900, color: theme.text };
+const advancedSub = { fontSize: 12, color: theme.textMuted, fontWeight: 900 };
 const badgeReq = { padding: "6px 10px", borderRadius: 999, border: "1px solid #fecaca", background: "#fef2f2", color: "#991b1b", fontWeight: 900, fontSize: 12 };
-const warnFill = { marginTop: 10, fontSize: 12, color: "#b45309", fontWeight: 900 };
+const warnFill = { marginTop: 10, fontSize: 12, color: theme.warning, fontWeight: 900 };
 
-const notesOuter = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12 };
+const notesOuter = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12 };
 
 const modalFooter = { display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" };
 
-const previewBox = { border: "1px dashed #e5e7eb", background: "#f9fafb", borderRadius: 18, padding: 12, marginTop: 2 };
-const previewTitle = { fontSize: 13, fontWeight: 900, color: "#111827", marginBottom: 10 };
-const previewRow = { display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#374151", lineHeight: 1.7 };
+const previewBox = { border: `1px dashed ${theme.border}`, background: theme.surfaceAlt, borderRadius: 18, padding: 12, marginTop: 2 };
+const previewTitle = { fontSize: 13, fontWeight: 900, color: theme.text, marginBottom: 10 };
+const previewRow = { display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", fontSize: 12, color: theme.text, lineHeight: 1.7 };

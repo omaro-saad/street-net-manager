@@ -1,7 +1,11 @@
 // src/pages/HomePage.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+// Statistics from globally preloaded data (DataContext). No per-page fetch.
+import { useEffect, useMemo, useState } from "react";
 import { useData } from "../DataContext";
 import { useNavigate } from "react-router-dom";
+import { isApiMode } from "../lib/api.js";
+import LoadingLogo from "../components/LoadingLogo.jsx";
+import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
 
 /* =========================
    Helpers
@@ -41,18 +45,21 @@ function isExpired(sub) {
   if (!Number.isFinite(num) || num <= 0) return false;
   return num < Date.now();
 }
-function makeOnChanged(channel, cb) {
-  if (typeof cb !== "function") return () => {};
-  if (typeof channel !== "function") return () => {};
-  return channel(cb);
-}
 
 /* =========================
    Home
 ========================= */
 export default function HomePage() {
-  const { data, gate } = useData() || {};
+  const { data, gate, initDone } = useData() || {};
   const navigate = useNavigate();
+  const displayLoading = useMinLoadingTime(isApiMode() && !initDone);
+  if (displayLoading) {
+    return (
+      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", minHeight: "40vh" }}>
+        <LoadingLogo />
+      </div>
+    );
+  }
 
   // ✅ very light "enter" animation trigger (no layout changes)
   const [entered, setEntered] = useState(false);
@@ -86,311 +93,46 @@ export default function HomePage() {
   }, [adminSettings.companyAbout]);
 
   // =========================
-  // ✅ Detect DB availability
+  // ✅ Data from global store (preloaded on app init when in API mode)
   // =========================
-  const hasSubscribersDb =
-    typeof window !== "undefined" &&
-    window.api &&
-    window.api.subscribers &&
-    typeof window.api.subscribers.list === "function";
-
-  const hasDistributorsDb =
-    typeof window !== "undefined" &&
-    window.api &&
-    window.api.distributors &&
-    typeof window.api.distributors.list === "function";
-
-  const hasLinesDb =
-    typeof window !== "undefined" &&
-    window.api &&
-    window.api.lines &&
-    typeof window.api.lines.list === "function";
-
-  const hasEmployeesDb =
-    typeof window !== "undefined" &&
-    window.api &&
-    window.api.employees &&
-    typeof window.api.employees.list === "function";
-
-  const hasInventoryDb =
-    typeof window !== "undefined" &&
-    window.api &&
-    window.api.inventory &&
-    typeof window.api.inventory.listAll === "function";
-
-  const hasFinanceDb =
-    typeof window !== "undefined" &&
-    window.api &&
-    window.api.finance &&
-    typeof window.api.finance.getSummary === "function";
-
-  const hasLineDevicesDb =
-    typeof window !== "undefined" &&
-    window.api &&
-    window.api.lineDevices &&
-    typeof window.api.lineDevices.listAll === "function";
-
-  // =========================
-  // ✅ DB State (local in Home)
-  // =========================
-  const [dbSubs, setDbSubs] = useState([]);
-  const [dbDists, setDbDists] = useState([]);
-  const [dbLines, setDbLines] = useState([]);
-  const [dbEmployees, setDbEmployees] = useState([]);
-  const [dbInventory, setDbInventory] = useState(null);
-  const [dbLineDevicesCount, setDbLineDevicesCount] = useState(null);
-
-  const [dbManualInvoicesCount, setDbManualInvoicesCount] = useState(null);
-  const [dbAutoInvoicesCount, setDbAutoInvoicesCount] = useState(null);
-
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  // =========================
-  // ✅ Loaders (DB-first)
-  // =========================
-  const loadSubsDb = async () => {
-    if (!hasSubscribersDb) return;
-    try {
-      const list = await window.api.subscribers.list();
-      if (!mountedRef.current) return;
-      setDbSubs(safeArray(list));
-    } catch {
-      if (!mountedRef.current) return;
-      setDbSubs([]);
-    }
-  };
-
-  const loadDistsDb = async () => {
-    if (!hasDistributorsDb) return;
-    try {
-      const list = await window.api.distributors.list();
-      if (!mountedRef.current) return;
-      setDbDists(safeArray(list));
-    } catch {
-      if (!mountedRef.current) return;
-      setDbDists([]);
-    }
-  };
-
-  const loadLinesDb = async () => {
-    if (!hasLinesDb) return;
-    try {
-      const list = await window.api.lines.list();
-      if (!mountedRef.current) return;
-      setDbLines(safeArray(list));
-    } catch {
-      if (!mountedRef.current) return;
-      setDbLines([]);
-    }
-  };
-
-  const loadEmployeesDb = async () => {
-    if (!hasEmployeesDb) return;
-    try {
-      const list = await window.api.employees.list();
-      if (!mountedRef.current) return;
-      setDbEmployees(safeArray(list));
-    } catch {
-      if (!mountedRef.current) return;
-      setDbEmployees([]);
-    }
-  };
-
-  const loadInventoryDb = async () => {
-    if (!hasInventoryDb) return;
-    try {
-      const res = await window.api.inventory.listAll();
-      if (!mountedRef.current) return;
-      setDbInventory(safeObj(res));
-    } catch {
-      if (!mountedRef.current) return;
-      setDbInventory(null);
-    }
-  };
-
-  const loadFinanceDb = async () => {
-    if (!hasFinanceDb) return;
-    try {
-      const sum = await window.api.finance.getSummary();
-      if (!mountedRef.current) return;
-
-      const manual = Number(sum?.manualInvoicesCount ?? sum?.manual ?? sum?.manualInvoices ?? null);
-      const auto = Number(sum?.autoInvoicesCount ?? sum?.auto ?? sum?.autoInvoices ?? null);
-
-      setDbManualInvoicesCount(Number.isFinite(manual) ? manual : null);
-      setDbAutoInvoicesCount(Number.isFinite(auto) ? auto : null);
-    } catch {
-      if (!mountedRef.current) return;
-      setDbManualInvoicesCount(null);
-      setDbAutoInvoicesCount(null);
-    }
-  };
-
-  const loadLineDevicesAll = async () => {
-    if (!hasLineDevicesDb) return;
-    try {
-      const list = await window.api.lineDevices.listAll();
-      if (!mountedRef.current) return;
-      setDbLineDevicesCount(safeArray(list).length);
-    } catch {
-      if (!mountedRef.current) return;
-      setDbLineDevicesCount(null);
-    }
-  };
-
-  // =========================
-  // ✅ Boot + live refresh
-  // =========================
-  useEffect(() => {
-    let unsubs = [];
-
-    const boot = async () => {
-      if (hasSubscribersDb) await loadSubsDb();
-      if (hasDistributorsDb) await loadDistsDb();
-      if (hasLinesDb) await loadLinesDb();
-      if (hasEmployeesDb) await loadEmployeesDb();
-      if (hasInventoryDb) await loadInventoryDb();
-      if (hasFinanceDb) await loadFinanceDb();
-      if (hasLineDevicesDb) await loadLineDevicesAll();
-    };
-
-    boot();
-
-    if (hasSubscribersDb && typeof window.api.subscribers.onChanged === "function") {
-      unsubs.push(makeOnChanged(window.api.subscribers.onChanged, () => loadSubsDb()));
-    }
-    if (hasDistributorsDb && typeof window.api.distributors.onChanged === "function") {
-      unsubs.push(makeOnChanged(window.api.distributors.onChanged, () => loadDistsDb()));
-    }
-    if (hasLinesDb && typeof window.api.lines.onChanged === "function") {
-      unsubs.push(makeOnChanged(window.api.lines.onChanged, () => loadLinesDb()));
-    }
-    if (hasEmployeesDb && typeof window.api.employees.onChanged === "function") {
-      unsubs.push(makeOnChanged(window.api.employees.onChanged, () => loadEmployeesDb()));
-    }
-    if (hasInventoryDb && typeof window.api.inventory.onChanged === "function") {
-      unsubs.push(makeOnChanged(window.api.inventory.onChanged, () => loadInventoryDb()));
-    }
-    if (hasFinanceDb && typeof window.api.finance.onChanged === "function") {
-      unsubs.push(makeOnChanged(window.api.finance.onChanged, () => loadFinanceDb()));
-    }
-    if (hasLineDevicesDb && typeof window.api.lineDevices.onChanged === "function") {
-      unsubs.push(makeOnChanged(window.api.lineDevices.onChanged, () => loadLineDevicesAll()));
-    }
-
-    const needPolling =
-      (hasSubscribersDb && typeof window.api.subscribers.onChanged !== "function") ||
-      (hasDistributorsDb && typeof window.api.distributors.onChanged !== "function") ||
-      (hasLinesDb && typeof window.api.lines.onChanged !== "function") ||
-      (hasEmployeesDb && typeof window.api.employees.onChanged !== "function") ||
-      (hasInventoryDb && typeof window.api.inventory.onChanged !== "function") ||
-      (hasFinanceDb && typeof window.api.finance.onChanged !== "function") ||
-      (hasLineDevicesDb && typeof window.api.lineDevices.onChanged !== "function");
-
-    let t = null;
-    if (needPolling) {
-      t = setInterval(() => {
-        if (hasSubscribersDb) loadSubsDb();
-        if (hasDistributorsDb) loadDistsDb();
-        if (hasLinesDb) loadLinesDb();
-        if (hasEmployeesDb) loadEmployeesDb();
-        if (hasInventoryDb) loadInventoryDb();
-        if (hasFinanceDb) loadFinanceDb();
-        if (hasLineDevicesDb) loadLineDevicesAll();
-      }, 2000);
-    }
-
-    return () => {
-      for (const u of unsubs) {
-        try {
-          if (typeof u === "function") u();
-        } catch {}
-      }
-      if (t) clearInterval(t);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    hasSubscribersDb,
-    hasDistributorsDb,
-    hasLinesDb,
-    hasEmployeesDb,
-    hasInventoryDb,
-    hasFinanceDb,
-    hasLineDevicesDb,
-  ]);
-
-  // =========================
-  // ✅ Unified sources: DB-first -> gate -> data
-  // =========================
-  const subscribers = useMemo(() => {
-    if (hasSubscribersDb) return safeArray(dbSubs);
-    const g = gate?.subscribers?.list;
-    if (Array.isArray(g)) return g;
-    return safeArray(data?.subscribers);
-  }, [hasSubscribersDb, dbSubs, gate?.subscribers?.list, data?.subscribers]);
-
-  const distributors = useMemo(() => {
-    if (hasDistributorsDb) return safeArray(dbDists);
-    const g = gate?.distributors?.list;
-    if (Array.isArray(g)) return g;
-    return safeArray(data?.distributors);
-  }, [hasDistributorsDb, dbDists, gate?.distributors?.list, data?.distributors]);
-
+  const subscribers = useMemo(() => safeArray(data?.subscribers), [data?.subscribers]);
+  const distributors = useMemo(() => safeArray(data?.distributors), [data?.distributors]);
   const lines = useMemo(() => {
-    if (hasLinesDb) return safeArray(dbLines);
-    const g = gate?.lines?.list;
-    if (Array.isArray(g)) return g;
-    return safeArray(data?.lines);
-  }, [hasLinesDb, dbLines, gate?.lines?.list, data?.lines]);
-
+    const raw = data?.lines;
+    return Array.isArray(raw) ? raw : safeArray(raw?.items);
+  }, [data?.lines]);
   const employees = useMemo(() => {
-    if (hasEmployeesDb) return safeArray(dbEmployees);
-    const g = gate?.employees?.list;
-    if (Array.isArray(g)) return g;
-
     const d1 = safeArray(data?.employees);
     if (d1.length) return d1;
+    return safeArray(data?.staff);
+  }, [data?.employees, data?.staff]);
 
-    const d2 = safeArray(data?.staff);
-    if (d2.length) return d2;
+  const financeKv = useMemo(() => safeObj(data?.finance?._kv), [data?.finance?._kv]);
+  const manualInvoices = useMemo(() => safeArray(financeKv.manualInvoices), [financeKv.manualInvoices]);
+  const autoInvoices = useMemo(() => safeArray(financeKv.autoInvoices), [financeKv.autoInvoices]);
 
-    return [];
-  }, [hasEmployeesDb, dbEmployees, gate?.employees?.list, data?.employees, data?.staff]);
-
-  const finance = useMemo(() => safeObj(data?.finance), [data?.finance]);
-  const manualInvoices = useMemo(() => safeArray(finance.manualInvoices), [finance.manualInvoices]);
-  const autoInvoices = useMemo(() => safeArray(finance.autoInvoices), [finance.autoInvoices]);
-
-  const inventoryObj = useMemo(() => {
-    if (hasInventoryDb) return safeObj(dbInventory);
-    return safeObj(data?.inventory);
-  }, [hasInventoryDb, dbInventory, data?.inventory]);
-
+  const inventoryObj = useMemo(() => safeObj(data?.inventory), [data?.inventory]);
   const warehouses = useMemo(() => {
     const w1 = safeArray(inventoryObj.warehouses);
     if (w1.length) return w1;
-    const w2 = safeArray(inventoryObj.list);
-    if (w2.length) return w2;
-    return [];
+    return safeArray(inventoryObj.list);
   }, [inventoryObj.warehouses, inventoryObj.list]);
 
   const sectionsCount = useMemo(() => {
     const direct = safeArray(inventoryObj.sections);
     if (direct.length) return direct.length;
-
     let c = 0;
     for (const w of safeArray(warehouses)) c += safeArray(w?.sections).length;
     return c;
   }, [inventoryObj.sections, warehouses]);
 
+  const packagesItems = useMemo(() => {
+    const raw = data?.packages;
+    return Array.isArray(raw) ? raw : safeArray(raw?.items);
+  }, [data?.packages]);
+
   // =========================
-  // ✅ Stats
+  // ✅ Stats (from preloaded data; update when context updates after create/update/delete)
   // =========================
   const subsStats = useMemo(() => {
     let active = 0;
@@ -428,26 +170,18 @@ export default function HomePage() {
     return { active, inactive, total: safeArray(lines).length };
   }, [lines]);
 
-  const manualCount = useMemo(() => {
-    if (typeof dbManualInvoicesCount === "number") return dbManualInvoicesCount;
-    return safeArray(manualInvoices).length;
-  }, [dbManualInvoicesCount, manualInvoices]);
-
-  const autoCount = useMemo(() => {
-    if (typeof dbAutoInvoicesCount === "number") return dbAutoInvoicesCount;
-    return safeArray(autoInvoices).length;
-  }, [dbAutoInvoicesCount, autoInvoices]);
+  const manualCount = useMemo(() => safeArray(manualInvoices).length, [manualInvoices]);
+  const autoCount = useMemo(() => safeArray(autoInvoices).length, [autoInvoices]);
 
   const devicesCount = useMemo(() => {
-    if (typeof dbLineDevicesCount === "number") return dbLineDevicesCount;
-
+    const items = safeArray(inventoryObj.items);
+    if (items.length) return items.length;
     const d = safeArray(data?.devices);
     if (d.length) return d.length;
-
     let c = 0;
     for (const l of safeArray(lines)) c += safeArray(l?.devices).length;
     return c;
-  }, [dbLineDevicesCount, data?.devices, lines]);
+  }, [inventoryObj.items, data?.devices, lines]);
 
   // =========================
   // ✅ Tiles
@@ -478,19 +212,15 @@ export default function HomePage() {
         { label: "خط فعّال", value: linesStats.active },
         { label: "خط غير فعّال", value: linesStats.inactive },
       ],
-      route: "/plans",
+      route: "/lines",
       accent: "#22c55e",
     },
     {
-      title: "الاجهزة والمعدات",
-      description: "إحصائيات المخازن والأقسام والأجهزة.",
-      stats: [
-        { label: "مخازن", value: safeArray(warehouses).length },
-        { label: "أقسام", value: sectionsCount },
-        { label: "أجهزة", value: devicesCount },
-      ],
-      route: "/devices",
-      accent: "#ec4899",
+      title: "الباقات",
+      description: "عدد باقات المشتركين والموزعين.",
+      stats: [{ label: "عدد الباقات", value: packagesItems.length }],
+      route: "/packages",
+      accent: "#8b5cf6",
     },
     {
       title: "الموظفين",
@@ -508,7 +238,7 @@ export default function HomePage() {
       ],
       route: "/finance",
       accent: "#f97316",
-    },
+    }
   ];
 
   return (
@@ -517,7 +247,7 @@ export default function HomePage() {
         {/* القسم الأيمن */}
         <div className="hp-right">
           <header className="hp-fade">
-            <h1 className="hp-title">أهلاً بك في {companyName}</h1>
+            <h1 className="hp-title">أهلا بك {companyName}</h1>
             <p className="hp-about">{companyAbout}</p>
           </header>
 
@@ -582,12 +312,12 @@ export default function HomePage() {
           font-size: 30px;
           font-weight: 800;
           margin-bottom: 10px;
-          color: #111827;
+          color: var(--app-text);
         }
 
         .hp-about{
           font-size: 15px;
-          color: #6b7280;
+          color: var(--app-text-muted);
           max-width: 420px;
           line-height: 1.7;
         }
@@ -597,20 +327,24 @@ export default function HomePage() {
           padding: 14px 16px;
           border-radius: 16px;
           background: linear-gradient(135deg, rgba(168,85,247,0.08), rgba(59,130,246,0.05));
-          border: 1px solid rgba(148,163,184,0.5);
+          border: 1px solid var(--app-border);
         }
 
         .hp-concept-title{
           font-size: 18px;
           font-weight: 700;
           margin-bottom: 6px;
-          color: #111827;
+          color: var(--app-text);
         }
 
         .hp-concept-body{
           font-size: 14px;
-          color: #4b5563;
+          color: var(--app-text-muted);
           line-height: 1.7;
+        }
+
+        .theme-dark .hp-concept{
+          background: linear-gradient(135deg, rgba(124,58,237,0.2), rgba(139,92,246,0.12), rgba(99,102,241,0.1));
         }
 
         /* ===== Very light entrance animation (does NOT change tile styles) ===== */
@@ -696,13 +430,15 @@ function DashboardTile({ tile, onClick }) {
 
   return (
     <button
+      type="button"
+      className="hp-tile"
       onClick={onClick}
       style={{
         textAlign: "right",
         borderRadius: "18px",
         padding: "18px 16px",
-        border: "1px solid #e5e7eb",
-        backgroundColor: "#ffffff",
+        border: "1px solid var(--app-border)",
+        backgroundColor: "var(--app-surface)",
         cursor: "pointer",
         display: "flex",
         flexDirection: "column",
@@ -714,18 +450,18 @@ function DashboardTile({ tile, onClick }) {
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.transform = "translateY(-3px)";
-        e.currentTarget.style.boxShadow = "0 10px 24px rgba(0,0,0,0.07)";
+        e.currentTarget.style.boxShadow = "var(--app-shadow-md)";
         e.currentTarget.style.borderColor = accent;
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.transform = "translateY(0)";
         e.currentTarget.style.boxShadow = "none";
-        e.currentTarget.style.borderColor = "#e5e7eb";
+        e.currentTarget.style.borderColor = "var(--app-border)";
       }}
     >
-      <span style={{ fontSize: "16px", fontWeight: 700, color: "#374151" }}>{title}</span>
+      <span style={{ fontSize: "16px", fontWeight: 700, color: "var(--app-text)" }}>{title}</span>
 
-      <p style={{ fontSize: "14px", color: "#6b7280", lineHeight: 1.6, marginTop: "-4px" }}>{description}</p>
+      <p style={{ fontSize: "14px", color: "var(--app-text-muted)", lineHeight: 1.6, marginTop: "-4px" }}>{description}</p>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
         {safeArray(stats).map((s, idx) => (
@@ -734,16 +470,16 @@ function DashboardTile({ tile, onClick }) {
             style={{
               padding: "8px 10px",
               borderRadius: "999px",
-              backgroundColor: "#f9fafb",
+              backgroundColor: "var(--app-surface-alt)",
               display: "inline-flex",
               alignItems: "center",
               gap: "10px",
-              border: "1px solid #e5e7eb",
+              border: "1px solid var(--app-border)",
             }}
           >
             <span style={{ width: 8, height: 8, borderRadius: "999px", backgroundColor: accent }} />
-            <span style={{ fontSize: "12px", color: "#6b7280", fontWeight: 700 }}>{s.label}</span>
-            <span style={{ fontSize: "10px", fontWeight: 900, color: "#111827" }}>{s.value}</span>
+            <span style={{ fontSize: "12px", color: "var(--app-text-muted)", fontWeight: 700 }}>{s.label}</span>
+            <span style={{ fontSize: "10px", fontWeight: 900, color: "var(--app-text)" }}>{s.value}</span>
           </div>
         ))}
       </div>

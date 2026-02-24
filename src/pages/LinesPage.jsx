@@ -1,9 +1,46 @@
-// src/pages/PlansPage.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+// src/pages/LinesPage.jsx
+import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { useData } from "../DataContext";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { useAlert } from "../contexts/AlertContext.jsx";
+import ReadOnlyBanner from "../components/ReadOnlyBanner.jsx";
+import {
+  READ_ONLY_MESSAGE,
+  isApiMode,
+  apiLinesList,
+  apiLinesAdd,
+  apiLinesUpdate,
+  apiLinesDelete,
+} from "../lib/api.js";
+import { getCachedLines, setCachedLines, invalidateLines } from "../lib/apiCache.js";
+import LoadingLogo from "../components/LoadingLogo.jsx";
+import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import LoadingOverlay from "../components/LoadingOverlay.jsx";
 import { safeArray, safeObj, nowMs, genId, normId } from "../utils/helpers.js";
 import { useResponsive } from "../hooks/useResponsive.js";
 import { theme } from "../theme.js";
+import { Field } from "../components/shared/index.js";
+import {
+  pageWrap,
+  input,
+  btnPrimary,
+  btnOutline,
+  btnTinyPrimary,
+  btnTinyDanger,
+  iconBtn,
+  miniLabel,
+  modalHeader,
+  modalTitle,
+  modalOverlay,
+  modalContent,
+  emptyText,
+  chip,
+  h1,
+  textMuted,
+  grid2,
+  contentCenterWrap,
+} from "../styles/shared.js";
 function ensureLineShape(raw) {
   const x = raw && typeof raw === "object" ? raw : {};
   const id = normId(x.id) || genId("line");
@@ -27,19 +64,63 @@ function cleanText(x) {
   return s ? s : "";
 }
 
-export default function PlansPage() {
+export default function LinesPage() {
   const ctx = useData();
   const { data, setData } = ctx || {};
-
+  const { getLimit, canWrite, token } = useAuth();
+  const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showConfirmAlert } = useAlert();
+  const canWriteLines = canWrite("lines");
   const { isNarrow, isMobile } = useResponsive();
 
-  // =========================
-  // Local Source of Truth (NO DB)
-  // =========================
+  const useLinesApi = isApiMode() && !!token;
+  const [linesFromApi, setLinesFromApi] = useState([]);
+  const [linesApiLoading, setLinesApiLoading] = useState(false);
+  const { execute, isLoading: actionLoading } = useAsyncAction({ minLoadingMs: 1000 });
+
+  const loadLinesApi = useCallback(async () => {
+    if (!useLinesApi || !token) return;
+    const cached = getCachedLines();
+    if (cached != null) {
+      setLinesFromApi(cached);
+      return;
+    }
+    setLinesApiLoading(true);
+    try {
+      const res = await apiLinesList(token);
+      if (res.ok && Array.isArray(res.data)) {
+        const shaped = res.data.map(ensureLineShape);
+        setLinesFromApi(shaped);
+        setCachedLines(shaped);
+      } else setLinesFromApi([]);
+    } catch {
+      setLinesFromApi([]);
+    } finally {
+      setLinesApiLoading(false);
+    }
+  }, [useLinesApi, token]);
+
+  useEffect(() => {
+    if (useLinesApi) loadLinesApi();
+  }, [useLinesApi, loadLinesApi]);
+
+  // Sync API lines into DataContext so SubscribersPage, DistributorsPage, MyMapPage can read them
+  useEffect(() => {
+    if (!useLinesApi || typeof setData !== "function") return;
+    setData((prev) => ({
+      ...prev,
+      lines: { items: linesFromApi },
+      updatedAt: nowMs(),
+    }));
+  }, [useLinesApi, linesFromApi, setData]);
+
   const lines = useMemo(() => {
+    if (useLinesApi) return linesFromApi;
     const raw = data?.lines?.items ?? data?.lines ?? [];
     return safeArray(raw).map(ensureLineShape);
-  }, [data?.lines]);
+  }, [useLinesApi, linesFromApi, data?.lines]);
+
+  const linesLimit = getLimit("lines");
+  const linesAtLimit = linesLimit != null && lines.length >= linesLimit;
 
   const subscribersSource = useMemo(() => safeArray(data?.subscribers ?? []), [data?.subscribers]);
   const distributorsSource = useMemo(() => safeArray(data?.distributors ?? []), [data?.distributors]);
@@ -47,7 +128,7 @@ export default function PlansPage() {
   // ===== Local CRUD: Lines =====
   const localUpsertLine = (id, patch, { isNew } = { isNew: false }) => {
     if (typeof setData !== "function") {
-      alert("⚠️ لا يمكن الحفظ: setData غير متوفر في DataContext.");
+      showErrorAlert("لا يمكن الحفظ: setData غير متوفر في DataContext.");
       return false;
     }
 
@@ -88,7 +169,7 @@ export default function PlansPage() {
 
   const localRemoveLine = (id) => {
     if (typeof setData !== "function") {
-      alert("⚠️ لا يمكن الحذف: setData غير متوفر في DataContext.");
+      showErrorAlert("لا يمكن الحذف: setData غير متوفر في DataContext.");
       return false;
     }
 
@@ -174,13 +255,48 @@ export default function PlansPage() {
   };
 
   // =========================
-  // CRUD (LOCAL ONLY)
+  // CRUD (API when useLinesApi, else local)
   // =========================
   const addLine = async (e) => {
     e.preventDefault();
+    if (!canWriteLines) return showReadOnlyAlert();
+
+    if (linesAtLimit) {
+      showPlanLimitAlert();
+      return;
+    }
 
     const payload = validate(form);
-    if (!payload.ok) return alert(payload.msg);
+    if (!payload.ok) return showValidationAlert(payload.msg);
+
+    await execute(async () => {
+    if (useLinesApi && token) {
+      const optimistic = ensureLineShape({
+        id: `temp-${Date.now()}`,
+        name: payload.data.name,
+        address: payload.data.address,
+        active: payload.data.active,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      setLinesFromApi((prev) => [optimistic, ...prev]);
+      closeAdd();
+      const res = await apiLinesAdd(token, {
+        name: payload.data.name,
+        address: payload.data.address,
+        active: payload.data.active,
+      });
+      if (!res.ok) {
+        setLinesFromApi((prev) => prev.filter((l) => l.id !== optimistic.id));
+        return showErrorAlert(res.error || "فشل إضافة الخط.");
+      }
+      if (res.data) {
+        const server = ensureLineShape(res.data);
+        setLinesFromApi((prev) => prev.map((l) => (l.id === optimistic.id ? server : l)));
+        invalidateLines();
+      }
+      return;
+    }
 
     const newLine = ensureLineShape({
       id: genId("line"),
@@ -192,17 +308,35 @@ export default function PlansPage() {
     });
 
     const ok = localUpsertLine(newLine.id, newLine, { isNew: true });
-    if (!ok) return alert("فشل حفظ الخط محليًا.");
-
+    if (!ok) return showErrorAlert("فشل حفظ الخط محليًا.");
     closeAdd();
+    });
   };
 
   const saveEdit = async (e) => {
     e.preventDefault();
     if (!editing) return;
+    if (!canWriteLines) return showReadOnlyAlert();
 
     const payload = validate(form);
-    if (!payload.ok) return alert(payload.msg);
+    if (!payload.ok) return showValidationAlert(payload.msg);
+
+    await execute(async () => {
+    if (useLinesApi && token) {
+      const res = await apiLinesUpdate(token, editing.id, {
+        name: payload.data.name,
+        address: payload.data.address,
+        active: payload.data.active,
+      });
+      if (!res.ok) return showErrorAlert(res.error || "فشل تحديث الخط.");
+      if (res.data) {
+        const next = ensureLineShape(res.data);
+        setLinesFromApi((prev) => prev.map((l) => (normId(l.id) === normId(editing.id) ? next : l)));
+        invalidateLines();
+      }
+      closeEdit();
+      return;
+    }
 
     const patch = {
       name: payload.data.name,
@@ -210,23 +344,52 @@ export default function PlansPage() {
       active: payload.data.active,
       updatedAt: nowMs(),
     };
-
     const ok = localUpsertLine(editing.id, patch, { isNew: false });
-    if (!ok) return alert("فشل تعديل الخط محليًا.");
-
+    if (!ok) return showErrorAlert("فشل تعديل الخط محليًا.");
     closeEdit();
+    });
   };
 
   const deleteLine = async (id) => {
-    if (!window.confirm("حذف الخط؟")) return;
-
-    const ok = localRemoveLine(id);
-    if (!ok) alert("فشل حذف الخط محليًا.");
+    if (!canWriteLines) return showReadOnlyAlert();
+    showConfirmAlert({
+      message: "حذف الخط؟",
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        execute(async () => {
+          if (useLinesApi && token) {
+            const res = await apiLinesDelete(token, id);
+            if (!res.ok) return showErrorAlert(res.error || "فشل حذف الخط.");
+            setLinesFromApi((prev) => prev.filter((l) => normId(l.id) !== normId(id)));
+            invalidateLines();
+            return;
+          }
+          const ok = localRemoveLine(id);
+          if (!ok) showErrorAlert("فشل حذف الخط محليًا.");
+        });
+      },
+    });
   };
 
   const toggleActive = async (id) => {
+    if (!canWriteLines) return showReadOnlyAlert();
+    const current = lines.find((l) => normId(l.id) === normId(id));
+    if (!current) return;
+
+    await execute(async () => {
+    if (useLinesApi && token) {
+      const res = await apiLinesUpdate(token, id, { active: !Boolean(current.active) });
+      if (!res.ok) return showErrorAlert(res.error || "فشل تغيير الحالة.");
+      if (res.data) {
+        const next = ensureLineShape(res.data);
+        setLinesFromApi((prev) => prev.map((l) => (normId(l.id) === normId(id) ? next : l)));
+        invalidateLines();
+      }
+      return;
+    }
     const ok = localToggleActive(id);
-    if (!ok) alert("فشل تغيير حالة الخط محليًا.");
+    if (!ok) showErrorAlert("فشل تغيير حالة الخط محليًا.");
+    });
   };
 
   // =========================
@@ -317,11 +480,11 @@ export default function PlansPage() {
     [isMobile]
   );
 
-  const overlayR = useMemo(() => ({ ...overlay, padding: isMobile ? 10 : 14, alignItems: "center" }), [isMobile]);
-  const modalR = useMemo(() => ({ ...modal, maxWidth: 1100, borderRadius: 20, padding: "18px 18px 16px", maxHeight: "90vh", overflow: "hidden" }), []);
+  const overlayR = useMemo(() => ({ ...modalOverlay, padding: isMobile ? 10 : 14, alignItems: "center" }), [isMobile]);
+  const modalR = useMemo(() => ({ ...modalContent, width: "100%", maxWidth: 1100, borderRadius: 20, padding: "18px 18px 16px", maxHeight: "90vh", overflow: "hidden" }), []);
   const modalBodyR = useMemo(() => ({ ...modalBody, maxHeight: isMobile ? "72vh" : "70vh" }), [isMobile]);
 
-  const formGridR = useMemo(() => ({ ...formGrid, gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))" }), [isMobile]);
+  const formGridR = useMemo(() => ({ ...grid2, gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))" }), [isMobile]);
   const modalActionsR = useMemo(() => ({ ...modalActions, flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 10 }), [isMobile]);
 
   const panelTopR = useMemo(() => ({ ...panelTop, flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "flex-start" }), [isMobile]);
@@ -331,17 +494,35 @@ export default function PlansPage() {
   const tabBtnR = useMemo(() => ({ ...tabBtn, width: isMobile ? "100%" : undefined, justifyContent: "center" }), [isMobile]);
   const tabBtnActiveR = useMemo(() => ({ ...tabBtnR, ...tabBtnActive }), [tabBtnR]);
 
+  const displayLoading = useMinLoadingTime(useLinesApi && linesApiLoading && linesFromApi.length === 0);
+  if (displayLoading) {
+    return (
+      <div style={pageWrapR}>
+        <div style={contentCenterWrap}>
+          <LoadingLogo />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={pageWrapR}>
+      <LoadingOverlay visible={actionLoading} />
+      {!canWriteLines && <ReadOnlyBanner />}
       <div style={topRowR}>
         <div>
           <h1 style={h1}>خطوط الشبكة</h1>
-          <p style={p}>هذه الصفحة مسؤولة عن اظهار جميع خطوط شبكتك مع ادارة لبياناتها وتحكم فيها</p>
+          <p style={textMuted}>هذه الصفحة مسؤولة عن اظهار جميع خطوط شبكتك مع ادارة لبياناتها وتحكم فيها</p>
 
           {/* ✅ تم حذف أي تحذير/اعتماد DB نهائياً */}
         </div>
 
-        <button style={btnPrimaryR} onClick={openAdd}>
+        <button
+          style={btnPrimaryR}
+          onClick={() => { if (linesAtLimit) { showPlanLimitAlert(); return; } openAdd(); }}
+          disabled={!canWriteLines || actionLoading}
+          title={!canWriteLines ? READ_ONLY_MESSAGE : undefined}
+        >
           + إضافة خط
         </button>
       </div>
@@ -364,17 +545,20 @@ export default function PlansPage() {
         </div>
       </div>
 
-      <div style={gridR}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 200 }}>
         {filteredLines.length === 0 ? (
-          <div style={empty}>لا يوجد خطوط. اضغط “إضافة خط”.</div>
+          <div style={contentCenterWrap}>
+            <div style={emptyText}>لا يوجد خطوط. اضغط "إضافة خط".</div>
+          </div>
         ) : (
-          filteredLines.map((l) => (
+          <div style={gridR}>
+          {filteredLines.map((l) => (
             <div key={l.id} style={card}>
               <div style={cardTopR}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   <div style={cardTitle}>{l.name || "—"}</div>
                   <div style={cardMeta}>
-                    <span style={chip2}>{l.active ? "فعّال" : "غير فعّال"}</span>
+                    <span style={chip}>{l.active ? "فعّال" : "غير فعّال"}</span>
                   </div>
                 </div>
 
@@ -392,7 +576,7 @@ export default function PlansPage() {
                     فتح
                   </button>
 
-                  <button style={iconBtn} onClick={() => openEdit(l)}>
+                  <button style={iconBtn} onClick={() => openEdit(l)} disabled={!canWriteLines || actionLoading} title={!canWriteLines ? READ_ONLY_MESSAGE : undefined}>
                     ✎
                   </button>
                 </div>
@@ -410,15 +594,16 @@ export default function PlansPage() {
               </div>
 
               <div style={cardActions}>
-                <button style={l.active ? btnTinyOutline : btnTinyPrimary} onClick={() => toggleActive(l.id)}>
+                <button style={l.active ? btnTinyOutline : btnTinyPrimary} onClick={() => toggleActive(l.id)} disabled={!canWriteLines || actionLoading} title={!canWriteLines ? READ_ONLY_MESSAGE : undefined}>
                   {l.active ? "تعطيل" : "تفعيل"}
                 </button>
-                <button style={btnTinyDanger} onClick={() => deleteLine(l.id)}>
+                <button style={btnTinyDanger} onClick={() => deleteLine(l.id)} disabled={!canWriteLines || actionLoading} title={!canWriteLines ? READ_ONLY_MESSAGE : undefined}>
                   حذف
                 </button>
               </div>
             </div>
-          ))
+          ))}
+          </div>
         )}
       </div>
 
@@ -447,10 +632,10 @@ export default function PlansPage() {
             </Field>
 
             <div style={modalActionsR}>
-              <button type="button" style={{ ...btnOutline, width: isMobile ? "100%" : undefined }} onClick={closeAdd}>
+              <button type="button" style={{ ...btnOutline, width: isMobile ? "100%" : undefined }} onClick={closeAdd} disabled={actionLoading}>
                 إلغاء
               </button>
-              <button type="submit" style={{ ...btnPrimary, width: isMobile ? "100%" : undefined }}>
+              <button type="submit" style={{ ...btnPrimary, width: isMobile ? "100%" : undefined }} disabled={actionLoading}>
                 حفظ
               </button>
             </div>
@@ -478,10 +663,10 @@ export default function PlansPage() {
             </Field>
 
             <div style={modalActionsR}>
-              <button type="button" style={{ ...btnOutline, width: isMobile ? "100%" : undefined }} onClick={closeEdit}>
+              <button type="button" style={{ ...btnOutline, width: isMobile ? "100%" : undefined }} onClick={closeEdit} disabled={actionLoading}>
                 إلغاء
               </button>
-              <button type="submit" style={{ ...btnPrimary, width: isMobile ? "100%" : undefined }}>
+              <button type="submit" style={{ ...btnPrimary, width: isMobile ? "100%" : undefined }} disabled={actionLoading}>
                 حفظ التعديل
               </button>
             </div>
@@ -513,10 +698,10 @@ export default function PlansPage() {
               </div>
 
               <div style={panelStatsR}>
-                <span style={chip2}>
+                <span style={chip}>
                   مشتركين: <b>{subsCount}</b>
                 </span>
-                <span style={chip2}>
+                <span style={chip}>
                   موزعين: <b>{distsCount}</b>
                 </span>
               </div>
@@ -540,7 +725,9 @@ export default function PlansPage() {
               <div style={panelColWide}>
                 <div style={panelTitle}>المشتركين على هذا الخط</div>
                 {panelFiltered.subs.length === 0 ? (
-                  <div style={empty}>لا يوجد مشتركين مرتبطين بهذا الخط.</div>
+                  <div style={contentCenterWrap}>
+                    <div style={emptyText}>لا يوجد مشتركين مرتبطين بهذا الخط.</div>
+                  </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {panelFiltered.subs.map((s) => {
@@ -550,7 +737,7 @@ export default function PlansPage() {
                         <div key={String(s.id)} style={panelCard}>
                           <div style={panelCardTop}>
                             <div style={panelCardTitle}>{s.name || "—"}</div>
-                            <span style={chip2}>📞 {s.phone || "—"}</span>
+                            <span style={chip}>📞 {s.phone || "—"}</span>
                           </div>
                           <div style={panelCardBody}>
                             <div style={panelRow}>
@@ -574,7 +761,9 @@ export default function PlansPage() {
               <div style={panelColWide}>
                 <div style={panelTitle}>الموزعين على هذا الخط</div>
                 {panelFiltered.dists.length === 0 ? (
-                  <div style={empty}>لا يوجد موزعين مرتبطين بهذا الخط.</div>
+                  <div style={contentCenterWrap}>
+                    <div style={emptyText}>لا يوجد موزعين مرتبطين بهذا الخط.</div>
+                  </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {panelFiltered.dists.map((d) => {
@@ -585,7 +774,7 @@ export default function PlansPage() {
                         <div key={String(d.id)} style={panelCard}>
                           <div style={panelCardTop}>
                             <div style={panelCardTitle}>{d.name || "—"}</div>
-                            <span style={chip2}>📞 {phone}</span>
+                            <span style={chip}>📞 {phone}</span>
                           </div>
                           <div style={panelCardBody}>
                             <div style={panelRow}>
@@ -631,8 +820,8 @@ function validate(form) {
 /* ===== UI Helpers ===== */
 function Modal({ overlayRef, title, onClose, children, overlayStyle, modalStyle, bodyStyle }) {
   return (
-    <div ref={overlayRef} style={overlayStyle || overlay} onMouseDown={(e) => e.target === overlayRef.current && onClose()}>
-      <div style={modalStyle || modal}>
+    <div ref={overlayRef} style={overlayStyle || modalOverlay} onMouseDown={(e) => e.target === overlayRef.current && onClose()}>
+      <div style={modalStyle || modalRDefault}>
         <div style={modalHeader}>
           <div style={modalTitle}>{title}</div>
           <button style={xBtn} onClick={onClose}>
@@ -644,81 +833,29 @@ function Modal({ overlayRef, title, onClose, children, overlayStyle, modalStyle,
     </div>
   );
 }
-function Field({ label, children }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={miniLabel}>{label}</div>
-      {children}
-    </div>
-  );
-}
 
-/* ===== Styles ===== */
-const pageWrap = { display: "flex", flexDirection: "column", gap: 14, height: "100%", overflowY: "auto", paddingBottom: 10, direction: "rtl", textAlign: "right" };
+/* ===== Styles (page-specific; shared tokens imported above) ===== */
 const topRow = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
-const h1 = { fontSize: 26, fontWeight: 900, color: "#111827" };
-const p = { fontSize: 14, color: "#6b7280", lineHeight: 1.6 };
-
-const filtersCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12 };
+const filtersCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12 };
 const filtersRow = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" };
 
-const miniLabel = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-
-const input = {
-  padding: "10px 12px",
-  borderRadius: 14,
-  border: "1px solid #d1d5db",
-  fontSize: 14,
-  outline: "none",
-  backgroundColor: "#ffffff",
-  width: "100%",
-  boxSizing: "border-box",
-  direction: "rtl",
-  textAlign: "right",
-};
-
 const grid = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 };
-const empty = { fontSize: 13, color: "#9ca3af", padding: "6px 2px" };
+const modalRDefault = { ...modalContent, width: "100%", maxWidth: 1100, padding: "18px 18px 16px", maxHeight: "90vh", overflow: "hidden" };
 
-const card = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const card = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const cardTop = { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 };
-const cardTitle = { fontSize: 16, fontWeight: 900, color: "#111827" };
+const cardTitle = { fontSize: 16, fontWeight: 900, color: theme.text };
 const cardMeta = { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" };
-const chip2 = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#111827", fontWeight: 900, fontSize: 12 };
-const iconBtn = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 12, padding: "8px 10px", cursor: "pointer", fontWeight: 900, color: "#111827" };
 
 const cardBody = { display: "grid", gap: 6 };
 const row = { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" };
-const k = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-const v = { fontSize: 12, color: "#111827", fontWeight: 900 };
+const k = { fontSize: 12, color: theme.textMuted, fontWeight: 900 };
+const v = { fontSize: 12, color: theme.text, fontWeight: 900 };
 
 const cardActions = { display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" };
-
-const btnPrimary = {
-  padding: "10px 16px",
-  borderRadius: 999,
-  border: "none",
-  backgroundColor: theme.primary,
-  color: "#fff",
-  fontWeight: 900,
-  cursor: "pointer",
-  fontSize: 14,
-  boxShadow: "0 12px 30px rgba(15,23,42,0.15)",
-  whiteSpace: "nowrap",
-};
-const btnOutline = { padding: "10px 16px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTinyOutline = { padding: "8px 12px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-
-const overlay = { position: "fixed", inset: 0, backgroundColor: "rgba(15,23,42,0.45)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 999, padding: 14 };
-const modal = { width: "100%", maxWidth: 1100, backgroundColor: "#ffffff", borderRadius: 20, padding: "18px 18px 16px", boxShadow: "0 25px 50px rgba(15,23,42,0.35)", maxHeight: "90vh", overflow: "hidden", direction: "rtl", textAlign: "right" };
-const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 };
-const modalTitle = { fontSize: 18, fontWeight: 900, color: "#111827" };
-const xBtn = { border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#6b7280", padding: "6px 10px", borderRadius: 12 };
+const btnTinyOutline = { padding: "8px 12px", borderRadius: 999, border: `1px solid ${theme.border}`, backgroundColor: theme.surface, color: theme.text, fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
+const xBtn = { border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: theme.textMuted, padding: "6px 10px", borderRadius: 12 };
 const modalBody = { overflowY: "auto", maxHeight: "70vh", paddingRight: 2 };
-
-const formGrid = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px 12px" };
 const modalActions = { gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 10 };
 
 const panelTop = { display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" };
@@ -726,17 +863,17 @@ const panelInfo = { display: "grid", gap: 8, minWidth: 320, flex: 1 };
 const panelStats = { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" };
 
 const panelRow = { display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between" };
-const panelK = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-const panelV = { fontSize: 12, color: "#111827", fontWeight: 900 };
+const panelK = { fontSize: 12, color: theme.textMuted, fontWeight: 900 };
+const panelV = { fontSize: 12, color: theme.text, fontWeight: 900 };
 
-const panelColWide = { border: "1px solid #e5e7eb", borderRadius: 18, padding: 12, background: "#fff", display: "flex", flexDirection: "column", gap: 10 };
-const panelTitle = { fontSize: 14, fontWeight: 900, color: "#111827" };
+const panelColWide = { border: `1px solid ${theme.border}`, borderRadius: 18, padding: 12, background: theme.surface, display: "flex", flexDirection: "column", gap: 10 };
+const panelTitle = { fontSize: 14, fontWeight: 900, color: theme.text };
 
-const panelCard = { border: "1px solid #e5e7eb", borderRadius: 16, padding: 10, background: "#fff", display: "flex", flexDirection: "column", gap: 8 };
+const panelCard = { border: `1px solid ${theme.border}`, borderRadius: 16, padding: 10, background: theme.surface, display: "flex", flexDirection: "column", gap: 8 };
 const panelCardTop = { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" };
-const panelCardTitle = { fontSize: 13, fontWeight: 900, color: "#111827" };
+const panelCardTitle = { fontSize: 13, fontWeight: 900, color: theme.text };
 const panelCardBody = { display: "grid", gap: 6 };
 
 const tabsRow = { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" };
-const tabBtn = { padding: "10px 14px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const tabBtnActive = { ...tabBtn, border: "1px solid #c7d2fe", background: "#eef2ff", color: "#3730a3" };
+const tabBtn = { padding: "10px 14px", borderRadius: 999, border: `1px solid ${theme.border}`, background: theme.surface, color: theme.text, fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
+const tabBtnActive = { ...tabBtn, border: `1px solid ${theme.primary}`, background: theme.surfaceAlt, color: theme.primary };

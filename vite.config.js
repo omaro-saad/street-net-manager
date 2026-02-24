@@ -4,9 +4,19 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: "./",            // ✅ أهم سطر لإصلاح شاشة البياض مع file://
+  base: "./",
   build: {
     outDir: "dist",
     assetsDir: "assets",
+    sourcemap: false,
+    minify: true,
+    esbuild: { drop: ["console", "debugger"] },
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]",
+      },
+    },
   },
 });

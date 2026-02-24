@@ -1,8 +1,40 @@
 // FinancePage.jsx
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useData } from "../DataContext";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { useAlert } from "../contexts/AlertContext.jsx";
+import ReadOnlyBanner from "../components/ReadOnlyBanner.jsx";
+import LoadingLogo from "../components/LoadingLogo.jsx";
+import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import LoadingOverlay from "../components/LoadingOverlay.jsx";
+import { READ_ONLY_MESSAGE, isApiMode, apiFinanceGet, apiFinancePut } from "../lib/api.js";
 import { safeArray, safeObj, nowMs, genId, fmtMoney } from "../utils/helpers.js";
 import { theme } from "../theme.js";
+import {
+  pageWrap,
+  input,
+  h1,
+  miniLabel,
+  btnPrimary,
+  btnDanger,
+  btnTinyDanger,
+  btnTiny,
+  btnGhost,
+  iconBtn,
+  modalOverlay,
+  modalCard,
+  modalHeader,
+  modalTitle,
+  chip,
+  chipPrimary,
+  chipIncome,
+  chipExpense,
+  emptyBox,
+  emptyText,
+  grid2,
+  contentCenterWrap,
+} from "../styles/shared.js";
 
 function todayLocalISO() {
   const d = new Date();
@@ -40,14 +72,35 @@ const PAY_METHODS = ["كاش", "تحويل", "آجل", "أخرى"];
    ========================= */
 export default function FinancePage() {
   const { data, setData, gate } = useData();
+  const { token } = useAuth();
+
+  const useFinanceApi = isApiMode() && !!token;
 
   const finance = gate?.finance;
   const financeReady = !!finance?.isReady;
 
   const [tab, setTab] = useState("manual"); // manual | auto
+  const [financeLoading, setFinanceLoading] = useState(false);
+
+  // Load finance from API when in API mode
+  useEffect(() => {
+    if (!useFinanceApi || !token) {
+      setFinanceLoading(false);
+      return;
+    }
+    setFinanceLoading(true);
+    let cancelled = false;
+    (async () => {
+      const res = await apiFinanceGet(token);
+      if (cancelled) return;
+      setFinanceLoading(false);
+      if (res.ok && res.data) setData((prev) => ({ ...prev, finance: { _kv: res.data }, updatedAt: nowMs() }));
+    })();
+    return () => { cancelled = true; };
+  }, [useFinanceApi, token, setData]);
 
   // -------------------------
-  // Source: data.finance (in-memory)
+  // Source: data.finance (in-memory or synced from API)
   // -------------------------
   const finKv = safeObj(data?.finance?._kv ?? data?.finance);
   const manualAll = safeArray(finKv.manualInvoices);
@@ -55,6 +108,23 @@ export default function FinancePage() {
   const pricing = { enabled: true, defaultCurrency: "₪", ...safeObj(finKv.pricing) };
 
   const currency = String(pricing?.defaultCurrency || "₪");
+
+  const { getLimit, canWrite } = useAuth();
+  const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showSuccessAlert, showConfirmAlert } = useAlert();
+  const financeManualLimit = getLimit("financeManual");
+  const financeManualAtLimit = financeManualLimit != null && manualAll.length >= financeManualLimit;
+  const canWriteFinance = canWrite("finance");
+  const { execute, isLoading: actionLoading } = useAsyncAction({ minLoadingMs: 1000 });
+
+  // Persist full finance KV to API when in API mode
+  const persistFinanceKv = useCallback(
+    async (mergedKv) => {
+      if (!useFinanceApi || !token) return;
+      const res = await apiFinancePut(token, mergedKv);
+      if (!res.ok) showErrorAlert(res.error || "فشل حفظ المالية.");
+    },
+    [useFinanceApi, token, showErrorAlert]
+  );
 
   // -------------------------
   // MANUAL
@@ -144,13 +214,21 @@ export default function FinancePage() {
   };
 
   const persistManual = async (next) => {
-    // ✅ SQL-only
     await finance.set("manualInvoices", next);
+    await persistFinanceKv({ ...finKv, manualInvoices: next });
   };
 
   const saveManualInvoice = async (e) => {
     e.preventDefault();
-    if (!financeReady) return alert("المالية غير جاهزة.");
+    if (!financeReady) return showErrorAlert("المالية غير جاهزة.");
+    if (!canWriteFinance) {
+      showReadOnlyAlert();
+      return;
+    }
+    if (!editingManualId && financeManualAtLimit) {
+      showPlanLimitAlert();
+      return;
+    }
 
     const date = String(manualForm.date || "").trim();
     const type = String(manualForm.type || "").trim();
@@ -159,11 +237,11 @@ export default function FinancePage() {
     const payMethod = String(manualForm.payMethod || "").trim();
     const note = String(manualForm.note || "").trim();
 
-    if (!date) return alert("حدد التاريخ.");
-    if (!MANUAL_TYPES.includes(type)) return alert("نوع الفاتورة غير صحيح.");
-    if (!title) return alert("اكتب عنوان/سبب الفاتورة.");
-    if (amount === null || amount <= 0) return alert("المبلغ لازم يكون رقم أكبر من 0.");
-    if (!PAY_METHODS.includes(payMethod)) return alert("طريقة الدفع غير صحيحة.");
+    if (!date) return showValidationAlert("حدد التاريخ.", "التاريخ");
+    if (!MANUAL_TYPES.includes(type)) return showValidationAlert("نوع الفاتورة غير صحيح.", "النوع");
+    if (!title) return showValidationAlert("اكتب عنوان/سبب الفاتورة.", "العنوان");
+    if (amount === null || amount <= 0) return showValidationAlert("المبلغ لازم يكون رقم أكبر من 0.", "المبلغ");
+    if (!PAY_METHODS.includes(payMethod)) return showValidationAlert("طريقة الدفع غير صحيحة.", "طريقة الدفع");
 
     const id = editingManualId ? editingManualId : genId("man");
     const createdAt = editingManualId
@@ -176,19 +254,25 @@ export default function FinancePage() {
       ? manualAll.map((x) => (String(x.id) === String(id) ? row : x))
       : [row, ...manualAll];
 
-    await persistManual(next);
-
-    setManualModalOpen(false);
-    setEditingManualId(null);
+    await execute(async () => {
+      await persistManual(next);
+      setManualModalOpen(false);
+      setEditingManualId(null);
+    });
   };
 
   const deleteManualInvoice = async (id) => {
-    if (!financeReady) return alert("المالية غير جاهزة.");
-    if (!window.confirm("حذف الفاتورة اليدوية؟")) return;
-
-    const key = String(id || "").trim();
-    const next = manualAll.filter((x) => String(x.id) !== key);
-    await persistManual(next);
+    if (!canWriteFinance) return showReadOnlyAlert();
+    if (!financeReady) return showErrorAlert("المالية غير جاهزة.");
+    showConfirmAlert({
+      message: "حذف الفاتورة اليدوية؟",
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        const key = String(id || "").trim();
+        const next = manualAll.filter((x) => String(x.id) !== key);
+        execute(() => persistManual(next));
+      },
+    });
   };
 
   // -------------------------
@@ -245,10 +329,12 @@ export default function FinancePage() {
 
   const persistAuto = async (next) => {
     await finance.set("autoInvoices", next);
+    await persistFinanceKv({ ...finKv, autoInvoices: next });
   };
 
   const approveAutoInvoice = async (inv) => {
-    if (!financeReady) return alert("المالية غير جاهزة.");
+    if (!canWriteFinance) return showReadOnlyAlert();
+    if (!financeReady) return showErrorAlert("المالية غير جاهزة.");
     const id = String(inv?.id || "").trim();
     if (!id) return;
 
@@ -257,17 +343,22 @@ export default function FinancePage() {
       return { ...x, status: "approved", approvedAt: nowMs(), updatedAt: nowMs() };
     });
 
-    await persistAuto(next);
+    await execute(() => persistAuto(next));
   };
 
   const deleteAutoInvoice = async (inv) => {
-    if (!financeReady) return alert("المالية غير جاهزة.");
+    if (!canWriteFinance) return showReadOnlyAlert();
+    if (!financeReady) return showErrorAlert("المالية غير جاهزة.");
     const id = String(inv?.id || "").trim();
     if (!id) return;
-    if (!window.confirm("حذف الحركة من الحساب الآلي؟")) return;
-
-    const next = autoAll.filter((x) => String(x.id) !== id);
-    await persistAuto(next);
+    showConfirmAlert({
+      message: "حذف الحركة من الحساب الآلي؟",
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        const next = autoAll.filter((x) => String(x.id) !== id);
+        execute(() => persistAuto(next));
+      },
+    });
   };
 
   // -------------------------
@@ -349,20 +440,37 @@ export default function FinancePage() {
   }, [autoAll, currency]);
 
   const clearManualAll = useCallback(async () => {
-    if (!financeReady) return alert("المالية غير جاهزة.");
-    if (!window.confirm("تفريغ (حذف) كل الفواتير اليدوية؟")) return;
-    await finance.set("manualInvoices", []);
-    alert("تم تفريغ الفواتير اليدوية.");
-  }, [financeReady, finance]);
+    if (!financeReady) return showErrorAlert("المالية غير جاهزة.");
+    showConfirmAlert({
+      message: "تفريغ (حذف) كل الفواتير اليدوية؟",
+      confirmLabel: "تفريغ",
+      onConfirm: () => {
+        execute(async () => {
+          await finance.set("manualInvoices", []);
+          await persistFinanceKv({ ...finKv, manualInvoices: [] });
+          showSuccessAlert("تم تفريغ الفواتير اليدوية.");
+        });
+      },
+    });
+  }, [financeReady, finance, showConfirmAlert, showSuccessAlert, persistFinanceKv, finKv, execute]);
 
   const clearAutoAll = useCallback(async () => {
-    if (!financeReady) return alert("المالية غير جاهزة.");
-    if (!window.confirm("تفريغ (حذف) كل الفواتير الآلية؟")) return;
-    await finance.set("autoInvoices", []);
-    alert("تم تفريغ الفواتير الآلية.");
-  }, [financeReady, finance]);
+    if (!financeReady) return showErrorAlert("المالية غير جاهزة.");
+    showConfirmAlert({
+      message: "تفريغ (حذف) كل الفواتير الآلية؟",
+      confirmLabel: "تفريغ",
+      onConfirm: () => {
+        execute(async () => {
+          await finance.set("autoInvoices", []);
+          await persistFinanceKv({ ...finKv, autoInvoices: [] });
+          showSuccessAlert("تم تفريغ الفواتير الآلية.");
+        });
+      },
+    });
+  }, [financeReady, finance, showConfirmAlert, showSuccessAlert, persistFinanceKv, finKv, execute]);
 
   const runDump = async () => {
+    if (dumpAction === "clear" && !canWriteFinance) return showReadOnlyAlert();
     const stamp = todayLocalISO();
     if (dumpAction === "download") {
       if (dumpType === "manual") downloadTextFile(`manual_invoices_${stamp}.txt`, buildManualText());
@@ -378,13 +486,26 @@ export default function FinancePage() {
   // -------------------------
   // Render guards
   // -------------------------
+  const displayLoading = useMinLoadingTime(useFinanceApi && financeLoading);
+  if (displayLoading) {
+    return (
+      <div style={pageWrap}>
+        <div style={contentCenterWrap}>
+          <LoadingLogo />
+        </div>
+      </div>
+    );
+  }
+
   if (!financeReady) {
     return (
       <div style={pageWrap}>
-        <div style={sectionCard}>
-          <div style={sectionTitle}>المالية والحسابات</div>
-          <div style={emptyBox}>
-            ❌ المالية غير جاهزة.
+        <div style={contentCenterWrap}>
+          <div style={sectionCard}>
+            <div style={sectionTitle}>المالية والحسابات</div>
+            <div style={emptyBox}>
+              ❌ المالية غير جاهزة.
+            </div>
           </div>
         </div>
       </div>
@@ -393,6 +514,8 @@ export default function FinancePage() {
 
   return (
     <div style={pageWrap}>
+      <LoadingOverlay visible={actionLoading} />
+      {!canWriteFinance && <ReadOnlyBanner />}
       <div style={topRow}>
         <div>
           <h1 style={h1}>المالية والحسابات</h1>
@@ -427,7 +550,7 @@ export default function FinancePage() {
         </div>
 
         <div style={tabsLeft}>
-          <button style={tabBtnSpecial(false)} onClick={() => setDumpOpen(true)} title="تنزيل/تفريغ الفواتير">
+          <button style={tabBtnSpecial(false)} onClick={() => setDumpOpen(true)} disabled={actionLoading} title="تنزيل/تفريغ الفواتير">
             📦 تفريغ الفواتير
           </button>
         </div>
@@ -482,7 +605,12 @@ export default function FinancePage() {
             </div>
 
             <div style={actionBar}>
-              <button style={btnPrimary} onClick={openAddManual}>
+              <button
+                style={btnPrimary}
+                onClick={() => { if (financeManualAtLimit) { showPlanLimitAlert(); return; } openAddManual(); }}
+                disabled={!canWriteFinance || actionLoading}
+                title={!canWriteFinance ? READ_ONLY_MESSAGE : undefined}
+              >
                 + إضافة فاتورة
               </button>
             </div>
@@ -497,7 +625,9 @@ export default function FinancePage() {
             </div>
 
             {manualFiltered.length === 0 ? (
-              <div style={emptyBox}>لا يوجد فواتير يدوية بعد.</div>
+              <div style={contentCenterWrap}>
+                <div style={emptyBox}>لا يوجد فواتير يدوية بعد.</div>
+              </div>
             ) : (
               <div style={list}>
                 {manualFiltered.map((inv) => {
@@ -509,8 +639,8 @@ export default function FinancePage() {
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                           <div style={rowTitle}>{inv.title || "—"}</div>
                           <span style={pillStyle}>{inv.type}</span>
-                          <span style={chip2}>{inv.date || "—"}</span>
-                          <span style={chip2}>{inv.payMethod || "—"}</span>
+                          <span style={chip}>{inv.date || "—"}</span>
+                          <span style={chip}>{inv.payMethod || "—"}</span>
                         </div>
                         {inv.note ? <div style={noteText}>{asText(inv.note)}</div> : null}
                       </div>
@@ -520,10 +650,10 @@ export default function FinancePage() {
                           {sign} {fmtMoney(inv.amount)} {currency}
                         </div>
                         <div style={{ display: "flex", gap: 8 }}>
-                          <button style={btnTiny} onClick={() => openEditManual(inv)}>
+                          <button style={btnTiny} onClick={() => openEditManual(inv)} disabled={!canWriteFinance || actionLoading} title={!canWriteFinance ? READ_ONLY_MESSAGE : undefined}>
                             تعديل
                           </button>
-                          <button style={btnTinyDanger} onClick={() => deleteManualInvoice(inv.id)}>
+                          <button style={btnTinyDanger} onClick={() => deleteManualInvoice(inv.id)} disabled={!canWriteFinance || actionLoading} title={!canWriteFinance ? READ_ONLY_MESSAGE : undefined}>
                             حذف
                           </button>
                         </div>
@@ -595,7 +725,7 @@ export default function FinancePage() {
                     <button type="button" style={btnGhost} onClick={() => setManualModalOpen(false)}>
                       إلغاء
                     </button>
-                    <button type="submit" style={btnPrimary}>
+                    <button type="submit" style={btnPrimary} disabled={actionLoading}>
                       حفظ
                     </button>
                   </div>
@@ -641,11 +771,20 @@ export default function FinancePage() {
           <div style={sectionCard}>
             <div style={sectionHeader}>
               <div style={sectionTitle}>الحسابات الآلية</div>
-              <div style={sectionHint}>{autoFiltered.length} حركة • الطلبات لا تؤثر على الإجمالي حتى القبول</div>
+              <div style={sectionHint}>
+                {autoFiltered.length} حركة • من المشتركين والموزعين والموظفين • الطلبات لا تؤثر على الإجمالي حتى القبول
+              </div>
+            </div>
+            <div style={{ ...emptyText, marginBottom: 12, fontWeight: 500 }}>
+              الفواتير الآلية تُضاف تلقائياً من: صفحة المشتركين (اشتراكات)، صفحة الموزعين (فاتورة موزع)، صفحة الموظفين (راتب / فاتورة موظف).
             </div>
 
             {autoFiltered.length === 0 ? (
-              <div style={empty}>لا يوجد بيانات.</div>
+              <div style={contentCenterWrap}>
+                <div style={emptyBox}>
+                  لا توجد حركات آلية بعد. أضف فواتير من صفحة المشتركين أو الموزعين أو الموظفين لتظهر هنا.
+                </div>
+              </div>
             ) : (
               <div style={list}>
                 {autoFiltered.map((inv) => {
@@ -659,8 +798,8 @@ export default function FinancePage() {
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                           <div style={rowTitle}>{inv.kind || "—"}</div>
-                          <span style={chip}>{sourceLabel}</span>
-                          <span style={chip2}>{inv.date || "—"}</span>
+                          <span style={chipPrimary}>{sourceLabel}</span>
+                          <span style={chip}>{inv.date || "—"}</span>
                           {isPending ? <span style={chipPending}>بانتظار القبول</span> : <span style={chipApproved}>معتمد</span>}
                         </div>
 
@@ -679,15 +818,15 @@ export default function FinancePage() {
 
                         {isPending ? (
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                            <button style={btnTinyOk} onClick={() => approveAutoInvoice(inv)}>
+                            <button style={btnTinyOk} onClick={() => approveAutoInvoice(inv)} disabled={!canWriteFinance || actionLoading} title={!canWriteFinance ? READ_ONLY_MESSAGE : undefined}>
                               قبول
                             </button>
-                            <button style={btnTinyDanger} onClick={() => deleteAutoInvoice(inv)}>
+                            <button style={btnTinyDanger} onClick={() => deleteAutoInvoice(inv)} disabled={!canWriteFinance || actionLoading} title={!canWriteFinance ? READ_ONLY_MESSAGE : undefined}>
                               رفض / حذف
                             </button>
                           </div>
                         ) : (
-                          <button style={btnTinyDanger} onClick={() => deleteAutoInvoice(inv)}>
+                          <button style={btnTinyDanger} onClick={() => deleteAutoInvoice(inv)} disabled={!canWriteFinance || actionLoading} title={!canWriteFinance ? READ_ONLY_MESSAGE : undefined}>
                             حذف
                           </button>
                         )}
@@ -737,7 +876,7 @@ export default function FinancePage() {
                 <button style={btnGhost} onClick={() => setDumpOpen(false)}>
                   إلغاء
                 </button>
-                <button style={dumpAction === "clear" ? btnDanger : btnPrimary} onClick={runDump}>
+                <button style={dumpAction === "clear" ? btnDanger : btnPrimary} onClick={runDump} disabled={dumpAction === "clear" && !canWriteFinance} title={dumpAction === "clear" && !canWriteFinance ? READ_ONLY_MESSAGE : undefined}>
                   {dumpAction === "clear" ? "تفريغ الآن" : "تنزيل الآن"}
                 </button>
               </div>
@@ -749,27 +888,23 @@ export default function FinancePage() {
   );
 }
 
-/* =========================
-   Styles
-   ========================= */
-const pageWrap = { display: "flex", flexDirection: "column", gap: 14, height: "100%", overflowY: "auto", paddingBottom: 10 };
+/* ===== Page-specific styles (shared tokens imported above) ===== */
 const topRow = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
-const h1 = { fontSize: 26, fontWeight: 900, color: "#111827" };
 
-const totalCard = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: "12px 14px", minWidth: 280 };
-const totalLabel = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-const totalValue = { fontSize: 22, color: "#111827", fontWeight: 900, marginTop: 4 };
+const totalCard = { border: `1px solid ${theme.border}`, background: theme.surface, borderRadius: 18, padding: "12px 14px", minWidth: 280 };
+const totalLabel = { fontSize: 12, color: theme.textMuted, fontWeight: 900 };
+const totalValue = { fontSize: 22, color: theme.text, fontWeight: 900, marginTop: 4 };
 
-const tabsWrap = { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", border: "1px solid #e5e7eb", background: "#fff", borderRadius: 18, padding: 10 };
+const tabsWrap = { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", border: `1px solid ${theme.border}`, background: theme.surface, borderRadius: 18, padding: 10 };
 const tabsRight = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" };
 const tabsLeft = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" };
 
 const tabBtn = (active) => ({
   padding: "10px 14px",
   borderRadius: 999,
-  border: active ? "none" : "1px solid #e5e7eb",
-  background: active ? theme.primary : "#fff",
-  color: active ? "#fff" : "#111827",
+  border: active ? "none" : `1px solid ${theme.border}`,
+  background: active ? (theme.primaryGradient || theme.primary) : theme.surface,
+  color: active ? "#fff" : theme.text,
   fontWeight: 900,
   cursor: "pointer",
   fontSize: 13,
@@ -779,54 +914,31 @@ const tabBtnSpecial = () => ({
   padding: "10px 14px",
   borderRadius: 999,
   border: `1px solid ${theme.primary}`,
-  background: "#f5f3ff",
-  color: "#4c1d95",
+  background: theme.surfaceAlt,
+  color: theme.primary,
   fontWeight: 900,
   cursor: "pointer",
   fontSize: 13,
   boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
 });
 
-const filtersCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const filtersCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const filtersRow = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" };
 const actionBar = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" };
-const miniLabel = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
 
-const input = { padding: "10px 12px", borderRadius: 14, border: "1px solid #d1d5db", fontSize: 14, outline: "none", backgroundColor: "#ffffff", width: "100%", boxSizing: "border-box" };
-
-const sectionCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const sectionCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const sectionHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" };
-const sectionTitle = { fontSize: 15, fontWeight: 900, color: "#111827" };
-const sectionHint = { fontSize: 12, fontWeight: 900, color: "#6b7280" };
-
-const emptyBox = { border: "1px dashed #e5e7eb", background: "#f9fafb", borderRadius: 18, padding: 14, fontSize: 13, color: "#6b7280", lineHeight: 1.7 };
-const empty = { fontSize: 13, color: "#9ca3af", padding: "6px 2px" };
+const sectionTitle = { fontSize: 15, fontWeight: 900, color: theme.text };
+const sectionHint = { fontSize: 12, fontWeight: 900, color: theme.textMuted };
 
 const list = { display: "flex", flexDirection: "column", gap: 10 };
-const row = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" };
-const rowTitle = { fontSize: 15, fontWeight: 900, color: "#111827" };
-const noteText = { fontSize: 12, color: "#6b7280", lineHeight: 1.7 };
-const meta = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: "#6b7280", lineHeight: 1.6 };
+const row = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" };
+const rowTitle = { fontSize: 15, fontWeight: 900, color: theme.text };
+const noteText = { fontSize: 12, color: theme.textMuted, lineHeight: 1.7 };
+const meta = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: theme.textMuted, lineHeight: 1.6 };
 
-const chip2 = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#111827", fontWeight: 900, fontSize: 12 };
-const chip = { padding: "6px 10px", borderRadius: 999, border: "1px solid #c7d2fe", background: "#eef2ff", color: "#3730a3", fontWeight: 900, fontSize: 12 };
-const chipIncome = { padding: "6px 10px", borderRadius: 999, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#065f46", fontWeight: 900, fontSize: 12 };
-const chipExpense = { padding: "6px 10px", borderRadius: 999, border: "1px solid #fecaca", background: "#fef2f2", color: "#991b1b", fontWeight: 900, fontSize: 12 };
 const chipPending = { padding: "6px 10px", borderRadius: 999, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", fontWeight: 900, fontSize: 12 };
 const chipApproved = { padding: "6px 10px", borderRadius: 999, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#065f46", fontWeight: 900, fontSize: 12 };
 
-const amount = { fontSize: 16, fontWeight: 900, color: "#111827" };
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
-const btnDanger = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
-
-const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
+const amount = { fontSize: 16, fontWeight: 900, color: theme.text };
 const btnTinyOk = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#16a34a", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTiny = { padding: "8px 12px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnGhost = { padding: "10px 16px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-
-const modalOverlay = { position: "fixed", inset: 0, background: "rgba(17,24,39,0.35)", display: "flex", justifyContent: "center", alignItems: "center", padding: 16, zIndex: 999 };
-const modalCard = { width: "min(820px, 96vw)", background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", padding: 14 };
-const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 };
-const modalTitle = { fontSize: 16, fontWeight: 900, color: "#111827" };
-const iconBtn = { border: "1px solid #e5e7eb", background: "#fff", borderRadius: 12, padding: "8px 10px", cursor: "pointer", fontWeight: 900 };
-const grid2 = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 };

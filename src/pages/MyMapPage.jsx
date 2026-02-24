@@ -3,10 +3,34 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import ReactFlow, { Background, Controls, addEdge, useEdgesState, useNodesState } from "reactflow";
 import "reactflow/dist/style.css";
 import { useData } from "../DataContext";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { useAlert } from "../contexts/AlertContext.jsx";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
+import LoadingOverlay from "../components/LoadingOverlay.jsx";
+import LoadingLogo from "../components/LoadingLogo.jsx";
+import ReadOnlyBanner from "../components/ReadOnlyBanner.jsx";
+import { PLAN_LIMIT_MESSAGE, READ_ONLY_MESSAGE, isApiMode, apiMapsGet, apiMapsSet } from "../lib/api.js";
 import { MentionsInput, Mention } from "react-mentions";
 import { safeArray, nowMs, genId, normId } from "../utils/helpers.js";
 import { useResponsive } from "../hooks/useResponsive.js";
 import { theme } from "../theme.js";
+import {
+  pageWrap,
+  input,
+  h1,
+  miniLabel,
+  btnPrimary,
+  btnOutline,
+  btnTinyPrimary,
+  btnTinyDanger,
+  modalOverlay,
+  modalContent,
+  modalHeader,
+  modalTitle,
+  grid2,
+  contentCenterWrap,
+} from "../styles/shared.js";
 function cleanText(x) {
   const s = String(x ?? "").trim();
   return s ? s : "";
@@ -169,8 +193,8 @@ function coerceNodeProfile(d) {
    ========================= */
 function Modal({ overlayRef, title, onClose, children, overlayStyle, modalStyle }) {
   return (
-    <div ref={overlayRef} style={overlayStyle || overlay} onMouseDown={(e) => e.target === overlayRef.current && onClose()}>
-      <div style={modalStyle || modal}>
+    <div ref={overlayRef} style={overlayStyle || modalOverlay} onMouseDown={(e) => e.target === overlayRef.current && onClose()}>
+      <div style={modalStyle || modalWide}>
         <div style={modalHeader}>
           <div style={modalTitle}>{title}</div>
           <button style={xBtn} onClick={onClose} type="button">
@@ -329,6 +353,12 @@ function defaultMapState(lineId) {
 export default function MyMapPage() {
   const ctx = useData();
   const gate = ctx?.gate;
+  const data = ctx?.data;
+  const { getLimit, canWrite, token } = useAuth();
+  const useMapsApi = isApiMode() && !!token;
+  const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showSuccessAlert, showConfirmAlert } = useAlert();
+  const canWriteMap = canWrite("map");
+  const { execute, isLoading: actionLoading } = useAsyncAction({ minLoadingMs: 1000 });
 
   const { isMobile } = useResponsive();
 
@@ -337,20 +367,24 @@ export default function MyMapPage() {
   // =========================
   const [dbLines, setDbLines] = useState([]);
   const [dbLinesErr, setDbLinesErr] = useState("");
+  const [linesLoading, setLinesLoading] = useState(true);
 
   const loadLines = useCallback(async () => {
+    setLinesLoading(true);
     try {
       if (gate?.lines?.isReady && typeof gate.lines.list === "function") {
         const rows = await gate.lines.list();
         setDbLines(safeArray(rows));
         setDbLinesErr("");
-        return;
+      } else {
+        setDbLines([]);
+        setDbLinesErr("lines.list غير متوفر (Gate غير جاهز)");
       }
-      setDbLines([]);
-      setDbLinesErr("lines.list غير متوفر (Gate غير جاهز)"); // المفروض ما تصير بعد DataContext الجديد
     } catch (e) {
       setDbLinesErr(String(e?.message || e || "Lines error"));
       setDbLines([]);
+    } finally {
+      setLinesLoading(false);
     }
   }, [gate]);
 
@@ -365,7 +399,8 @@ export default function MyMapPage() {
         if (typeof off === "function") off();
       } catch {}
     };
-  }, [loadLines, gate]);
+    // Re-run when data.lines changes (e.g. LinesPage synced API lines into context)
+  }, [loadLines, gate, data?.lines]);
 
   const lines = useMemo(() => {
     const shaped = safeArray(dbLines).map(ensureLineShape).filter((l) => l.id);
@@ -382,14 +417,19 @@ export default function MyMapPage() {
   }, [lines, selectedLineId]);
 
   // =========================
-  // ✅ React Flow state
+  // ✅ React Flow state (stable nodeTypes/edgeTypes to avoid React Flow #002)
   // =========================
+  const nodeTypes = useMemo(() => ({}), []);
+  const edgeTypes = useMemo(() => ({}), []);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [rfInstance, setRfInstance] = useState(null);
 
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [selectedEdgeId, setSelectedEdgeId] = useState("");
+
+  const mapNodesPerLineLimit = getLimit("mapNodesPerLine");
+  const mapNodesPerLineAtLimit = mapNodesPerLineLimit != null && nodes.length >= mapNodesPerLineLimit;
 
   // ✅ Node Editor Modal
   const overlayRef = useRef(null);
@@ -430,19 +470,25 @@ export default function MyMapPage() {
     async function loadMap() {
       setMapErr("");
       try {
-        if (!gate?.maps?.isReady || typeof gate.maps.get !== "function") {
-          setNodes([]);
-          setEdges([]);
-          setSelectedNodeId("");
-          setSelectedEdgeId("");
-          setMapErr("maps.get غير متوفر (Gate maps غير جاهز)");
-          return;
+        let row = null;
+        if (useMapsApi && token) {
+          const res = await apiMapsGet(token, lid);
+          if (!alive) return;
+          row = res.ok ? res.data : null;
+        } else {
+          if (!gate?.maps?.isReady || typeof gate.maps.get !== "function") {
+            setNodes([]);
+            setEdges([]);
+            setSelectedNodeId("");
+            setSelectedEdgeId("");
+            setMapErr("maps.get غير متوفر (Gate maps غير جاهز)");
+            return;
+          }
+          row = await gate.maps.get(lid);
         }
-
-        const row = await gate.maps.get(lid);
         if (!alive) return;
 
-        const payload = isObj(row?.payload) ? row.payload : null;
+        const payload = isObj(row?.payload) ? row.payload : (row && (row.nodes != null || row.edges != null || row.viewport) ? row : null);
         const effective = payload && (payload.nodes || payload.edges || payload.viewport) ? payload : defaultMapState(lid);
 
         setNodes(safeArray(effective.nodes));
@@ -478,7 +524,7 @@ export default function MyMapPage() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedLineId, applyViewport, gate]);
+  }, [selectedLineId, applyViewport, gate, useMapsApi, token]);
 
   // =========================
   // ✅ Subscribers for mentions (Context)
@@ -541,7 +587,15 @@ export default function MyMapPage() {
   // =========================
   const addNode = () => {
     const lid = normId(selectedLineId);
-    if (!lid) return alert("اختر خط أولاً.");
+    if (!lid) return showValidationAlert("اختر خط أولاً.", "الخط");
+    if (!canWriteMap) {
+      showReadOnlyAlert();
+      return;
+    }
+    if (mapNodesPerLineAtLimit) {
+      showPlanLimitAlert();
+      return;
+    }
 
     const id = genId("node");
     const profile = emptyNodeProfile();
@@ -579,53 +633,77 @@ export default function MyMapPage() {
       return;
     }
 
-    alert("حدد Node أو Edge أولاً.");
+    showValidationAlert("حدد Node أو Edge أولاً.");
   };
 
   const manualSave = async () => {
     const lid = normId(selectedLineId);
-    if (!lid) return alert("اختر خط أولاً.");
+    if (!lid) return showValidationAlert("اختر خط أولاً.", "الخط");
+    if (!canWriteMap) return showReadOnlyAlert();
+
+    const mapNodesLimit = getLimit("mapNodesPerLine");
+    if (mapNodesLimit != null && nodes.length > mapNodesLimit) {
+      showPlanLimitAlert();
+      return;
+    }
 
     const viewport = rfInstance?.getViewport?.() || { x: 0, y: 0, zoom: 1 };
     const payload = { lineId: lid, updatedAt: nowMs(), viewport, nodes, edges };
 
-    try {
-      if (!gate?.maps?.isReady || typeof gate.maps.save !== "function") return alert("maps.save غير متوفر (Gate maps غير جاهز)");
-      await gate.maps.save(lid, payload);
-      alert("✅ تم حفظ الخريطة (In-Memory — بدون قواعد بيانات)");
-    } catch (e) {
-      console.error(e);
-      alert(`فشل الحفظ: ${String(e?.message || e)}`);
-    }
+    await execute(async () => {
+      try {
+        if (useMapsApi && token) {
+          const res = await apiMapsSet(token, lid, payload);
+          if (!res.ok) return showErrorAlert(res.error || "فشل حفظ الخريطة");
+          showSuccessAlert("تم حفظ الخريطة");
+          return;
+        }
+        if (!gate?.maps?.isReady || typeof gate.maps.save !== "function") return showErrorAlert("maps.save غير متوفر (Gate maps غير جاهز)");
+        await gate.maps.save(lid, payload);
+        showSuccessAlert("تم حفظ الخريطة");
+      } catch (e) {
+        console.error(e);
+        showErrorAlert(`فشل الحفظ: ${String(e?.message || e)}`);
+      }
+    });
   };
 
   const clearAllContent = async () => {
     const lid = normId(selectedLineId);
-    if (!lid) return alert("اختر خط أولاً.");
+    if (!lid) return showValidationAlert("اختر خط أولاً.", "الخط");
+    if (!canWriteMap) return showReadOnlyAlert();
 
     const lineName = selectedLine?.name || `Line ${lid}`;
-    const ok = window.confirm(`تحذير: هذا سيمسح كل Nodes/Edges لهذا الخط فقط (${lineName}).\n\nمتأكد؟`);
-    if (!ok) return;
-
-    try {
-      if (!gate?.maps?.isReady || typeof gate.maps.save !== "function") return alert("maps.save غير متوفر (Gate maps غير جاهز)");
-
-      const viewport = rfInstance?.getViewport?.() || { x: 0, y: 0, zoom: 1 };
-      const empty = { ...defaultMapState(lid), viewport };
-      await gate.maps.save(lid, empty);
-
-      setNodes([]);
-      setEdges([]);
-      setSelectedNodeId("");
-      setSelectedEdgeId("");
-      setNodeEditorOpen(false);
-      setEditingNodeId("");
-      setNodeForm(emptyNodeProfile());
-      alert("✅ تم مسح الخريطة لهذا الخط (In-Memory)");
-    } catch (e) {
-      console.error(e);
-      alert(`فشل مسح الخريطة: ${String(e?.message || e)}`);
-    }
+    showConfirmAlert({
+      message: `تحذير: هذا سيمسح كل العُقد والروابط لهذا الخط فقط (${lineName}). هل أنت متأكد؟`,
+      confirmLabel: "مسح",
+      onConfirm: () => {
+        execute(async () => {
+          try {
+            const viewport = rfInstance?.getViewport?.() || { x: 0, y: 0, zoom: 1 };
+            const empty = { ...defaultMapState(lid), viewport };
+            if (useMapsApi && token) {
+              const res = await apiMapsSet(token, lid, empty);
+              if (!res.ok) return showErrorAlert(res.error || "فشل مسح الخريطة");
+            } else {
+              if (!gate?.maps?.isReady || typeof gate.maps.save !== "function") return showErrorAlert("maps.save غير متوفر (Gate maps غير جاهز)");
+              await gate.maps.save(lid, empty);
+            }
+            setNodes([]);
+            setEdges([]);
+            setSelectedNodeId("");
+            setSelectedEdgeId("");
+            setNodeEditorOpen(false);
+            setEditingNodeId("");
+            setNodeForm(emptyNodeProfile());
+            showSuccessAlert("تم مسح الخريطة لهذا الخط");
+          } catch (e) {
+            console.error(e);
+            showErrorAlert(`فشل مسح الخريطة: ${String(e?.message || e)}`);
+          }
+        });
+      },
+    });
   };
 
   const onConnect = useCallback((params) => setEdges((eds) => addEdge({ ...params, id: genId("e") }, eds)), [setEdges]);
@@ -739,7 +817,7 @@ export default function MyMapPage() {
     if (!nid) return;
 
     const payload = validateNodeForm(nodeForm);
-    if (!payload.ok) return alert(payload.msg);
+    if (!payload.ok) return showValidationAlert(payload.msg);
 
     const label = buildNodeLabel(payload.data);
     const visual = getNodeVisualStyle(payload.data);
@@ -764,7 +842,7 @@ export default function MyMapPage() {
     const ipMatch = raw.match(/\b(\d{1,3}\.){3}\d{1,3}\b/);
     const ip = ipMatch ? ipMatch[0] : cleanText(raw);
 
-    if (!ip) return alert("حط عنوان IP أولاً.");
+    if (!ip) return showValidationAlert("حط عنوان IP أولاً.", "عنوان IP");
     openExternalUrl(`http://${ip}`);
   };
 
@@ -775,7 +853,7 @@ export default function MyMapPage() {
   // ✅ زر تنزيل JSON (الخريطة الحالية للخط)
   const downloadMapJson = () => {
     const lid = normId(selectedLineId);
-    if (!lid) return alert("اختر خط أولاً.");
+    if (!lid) return showValidationAlert("اختر خط أولاً.", "الخط");
 
     const viewport = rfInstance?.getViewport?.() || { x: 0, y: 0, zoom: 1 };
 
@@ -798,7 +876,7 @@ export default function MyMapPage() {
     const filename = `network_map_${safeName || lid}.json`;
 
     const ok = downloadJsonFile(filename, payload);
-    if (!ok) alert("فشل تنزيل JSON.");
+    if (!ok) showErrorAlert("فشل تنزيل JSON.");
   };
 
   // ===== Layout: 60/40 =====
@@ -810,13 +888,25 @@ export default function MyMapPage() {
 
   const rightScrollAreaR = useMemo(() => ({ ...rightScrollArea, maxHeight: isMobile ? 420 : "calc(100vh - 200px)" }), [isMobile]);
 
+  const displayLoading = useMinLoadingTime(linesLoading && lines.length === 0);
+  if (displayLoading) {
+    return (
+      <div style={pageWrapMap}>
+        <div style={contentCenterWrap}>
+          <LoadingLogo />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={pageWrap}>
+    <div style={pageWrapMap}>
+      <LoadingOverlay visible={actionLoading} />
+      {!canWriteMap && <ReadOnlyBanner />}
       {/* Header */}
       <div style={topRow}>
         <div>
           <h1 style={h1}>خريطة شبكتي</h1>
-          <p style={p}>كل خط له خريطة مستقلة (بدون قواعد بيانات)</p>
 
           {(dbLinesErr || mapErr || subsErr) && (
             <div style={warnBox}>
@@ -862,18 +952,18 @@ export default function MyMapPage() {
               <div style={miniLabel}>عمليات سريعة</div>
 
               <div style={btnRow}>
-                <button type="button" style={btnTinyPrimary} onClick={addNode} disabled={!selectedLine}>
-                  + إضافة نود
+                <button type="button" style={btnTinyPrimary} onClick={addNode} disabled={!selectedLine || mapNodesPerLineAtLimit || !canWriteMap || actionLoading} title={!canWriteMap ? READ_ONLY_MESSAGE : mapNodesPerLineAtLimit ? PLAN_LIMIT_MESSAGE : undefined}>
+                  + إضافة جهاز
                 </button>
-                <button type="button" style={btnTinyDanger} onClick={deleteSelected} disabled={!selectedLine}>
+                <button type="button" style={btnTinyDanger} onClick={deleteSelected} disabled={!selectedLine || !canWriteMap || actionLoading} title={!canWriteMap ? READ_ONLY_MESSAGE : undefined}>
                   حذف المحدد
                 </button>
-                <button type="button" style={btnTinyOutline} onClick={manualSave} disabled={!selectedLine}>
+                <button type="button" style={btnTinyOutline} onClick={manualSave} disabled={!selectedLine || !canWriteMap || actionLoading} title={!canWriteMap ? READ_ONLY_MESSAGE : undefined}>
                   حفظ الآن
                 </button>
               </div>
 
-              <button type="button" style={btnDangerWide} onClick={clearAllContent} disabled={!selectedLine} title="يمسح كل الخريطة لهذا الخط فقط">
+              <button type="button" style={btnDangerWide} onClick={clearAllContent} disabled={!selectedLine || !canWriteMap || actionLoading} title={!canWriteMap ? READ_ONLY_MESSAGE : "يمسح كل الخريطة لهذا الخط فقط"}>
                 ⚠️ حذف كل المحتوى لهذا الخط
               </button>
 
@@ -924,11 +1014,15 @@ export default function MyMapPage() {
 
           <div style={flowBox}>
             {!selectedLine ? (
-              <div style={canvasHint}>لا يوجد خطوط. أضف خطوط من صفحة خطوط الشبكة أولاً.</div>
+              <div style={contentCenterWrap}>
+                <div style={canvasHint}>لا يوجد خطوط. أضف خطوط من صفحة خطوط الشبكة أولاً.</div>
+              </div>
             ) : (
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
                 onInit={setRfInstance}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
@@ -948,9 +1042,9 @@ export default function MyMapPage() {
 
       {/* Node Editor Modal */}
       {nodeEditorOpen && (
-        <Modal overlayRef={overlayRef} title="تخصيص النود" onClose={closeNodeEditor} overlayStyle={overlay} modalStyle={modal}>
-          <form onSubmit={saveNodeProfile} style={formGrid}>
-            <Field label="الإسم الظاهر للجهاز (هذا الذي يظهر على النود)">
+        <Modal overlayRef={overlayRef} title="تخصيص الجهاز" onClose={closeNodeEditor} overlayStyle={modalOverlay} modalStyle={modalWide}>
+          <form onSubmit={saveNodeProfile} style={grid2}>
+            <Field label="الإسم الظاهر على الجهاز">
               <MentionsInput
                 value={String(nodeForm.displayName ?? "")}
                 onChange={(_e, newValue) => setNodeForm((f) => ({ ...f, displayName: normalizeAtSpacing(newValue) }))}
@@ -961,7 +1055,7 @@ export default function MyMapPage() {
                 <Mention trigger="@" data={mentionDataProvider} markup={MENTION_MARKUP} displayTransform={(_id, display) => `@${display}`} renderSuggestion={renderSubSuggestion} appendSpaceOnAdd />
               </MentionsInput>
 
-              <div style={hintText}>✅ اللي تكتبه هنا هو اللي يظهر على النود من الخارج.</div>
+              <div style={hintText}>✅ اللي تكتبه هنا هو اللي يظهر على الجهاز من الخارج.</div>
             </Field>
 
             <Field label="الجهاز (تبع لمين؟)">
@@ -1001,7 +1095,7 @@ export default function MyMapPage() {
               </select>
             </Field>
 
-            <Field label="الراوتر السابق (اختيار من نودات موجودة)">
+            <Field label="الجهاز السابق (اختيار من جهاز موجود)">
               <select style={input} value={nodeForm.upstreamDeviceId} onChange={(e) => setNodeForm((f) => ({ ...f, upstreamDeviceId: e.target.value }))}>
                 <option value="">— بدون —</option>
                 {safeArray(nodes)
@@ -1015,7 +1109,7 @@ export default function MyMapPage() {
               </select>
             </Field>
 
-            <Field label="الراوتر السابق (يدوي إذا مش موجود كنود)">
+            <Field label="الجهاز السابق (يدوي إذا مش موجود كجهاز)">
               <input style={input} value={nodeForm.upstreamRouter} onChange={(e) => setNodeForm((f) => ({ ...f, upstreamRouter: e.target.value }))} placeholder="مثال: 192.168.30.1" />
             </Field>
 
@@ -1070,10 +1164,10 @@ export default function MyMapPage() {
             </div>
 
             <div style={modalActions}>
-              <button type="button" style={btnOutline} onClick={closeNodeEditor}>
+              <button type="button" style={btnOutline} onClick={closeNodeEditor} disabled={actionLoading}>
                 إلغاء
               </button>
-              <button type="submit" style={btnPrimary}>
+              <button type="submit" style={btnPrimary} disabled={actionLoading}>
                 حفظ + ربط
               </button>
             </div>
@@ -1090,79 +1184,64 @@ export default function MyMapPage() {
   );
 }
 
-/* =========================
-   Styles
-   ========================= */
-const pageWrap = { display: "flex", flexDirection: "column", gap: 14, height: "100%", overflowY: "auto", paddingBottom: 80, direction: "rtl", textAlign: "right" };
+/* ===== Page-specific styles (shared tokens imported above) ===== */
+const pageWrapMap = { ...pageWrap, paddingBottom: 80, direction: "rtl", textAlign: "right" };
 const topRow = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
-const h1 = { fontSize: 26, fontWeight: 900, color: "#111827", margin: 0 };
-const p = { fontSize: 14, color: "#6b7280", lineHeight: 1.6, margin: 0, marginTop: 6 };
+const p = { fontSize: 14, color: theme.textMuted, lineHeight: 1.6, margin: 0, marginTop: 6 };
 
 const warnBox = { marginTop: 10, border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 14, padding: 10, color: "#9a3412", fontWeight: 900, fontSize: 12, lineHeight: 1.7 };
 
 const layout = { display: "flex", gap: 12, width: "100%", alignItems: "stretch" };
 
-const pane = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const pane = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const leftPane = { ...pane };
 const rightPane = { ...pane };
 
 const paneTitleRow = { display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" };
-const paneTitle = { fontSize: 14, fontWeight: 900, color: "#111827" };
+const paneTitle = { fontSize: 14, fontWeight: 900, color: theme.text };
 
-const flowBox = { border: "1px dashed #e5e7eb", borderRadius: 18, background: "#fff", flex: 1, minHeight: 360, overflow: "hidden" };
+const flowBox = { border: `1px dashed ${theme.border}`, borderRadius: 18, background: theme.surface, flex: 1, minHeight: 360, overflow: "hidden" };
 
-const canvasHint = { height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, fontSize: 13, color: "#6b7280", fontWeight: 900, textAlign: "center", lineHeight: 1.8 };
+const canvasHint = { height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, fontSize: 13, color: theme.textMuted, fontWeight: 900, textAlign: "center", lineHeight: 1.8 };
 
 const rightScrollArea = { display: "flex", flexDirection: "column", gap: 10, overflowY: "auto", paddingRight: 2, paddingBottom: 2, maxHeight: "calc(100vh - 200px)" };
 
-const cardBox = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const cardBox = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 
-const miniLabel = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-const hintText = { fontSize: 12, color: "#6b7280", lineHeight: 1.7, fontWeight: 700 };
+const hintText = { fontSize: 12, color: theme.textMuted, lineHeight: 1.7, fontWeight: 700 };
 
-const input = { padding: "10px 12px", borderRadius: 14, border: "1px solid #d1d5db", fontSize: 14, outline: "none", backgroundColor: "#ffffff", width: "100%", boxSizing: "border-box", direction: "rtl", textAlign: "right" };
-
-const inputAsBtn = { padding: "10px 12px", borderRadius: 14, border: "1px solid #d1d5db", fontSize: 14, outline: "none", backgroundColor: "#ffffff", width: "100%", boxSizing: "border-box", cursor: "pointer", fontWeight: 900, color: "#111827", textAlign: "center" };
+const inputAsBtn = { ...input, cursor: "pointer", fontWeight: 900, color: theme.text, textAlign: "center" };
 
 const btnRow = { display: "flex", gap: 8, flexWrap: "wrap" };
 
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
-const btnPrimaryWide = { padding: "10px 12px", borderRadius: 14, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 13, boxShadow: "0 12px 30px rgba(15,23,42,0.15)" };
-const btnOutline = { padding: "10px 16px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTinyOutline = { padding: "8px 12px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap", color: "#111827" };
-const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnDangerWide = { padding: "10px 12px", borderRadius: 14, border: "1px solid #fecaca", backgroundColor: "#fff", color: "#dc2626", fontWeight: 900, cursor: "pointer", fontSize: 13 };
+const btnTinyOutline = { padding: "8px 12px", borderRadius: 999, border: `1px solid ${theme.border}`, backgroundColor: theme.surface, color: theme.text, fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
+const btnPrimaryWide = { padding: "10px 12px", borderRadius: 14, border: "none", background: theme.primaryGradient || theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 13, boxShadow: "0 12px 30px rgba(15,23,42,0.15)" };
+const btnDangerWide = { padding: "10px 12px", borderRadius: 14, border: "1px solid #fecaca", backgroundColor: theme.surface, color: theme.error, fontWeight: 900, cursor: "pointer", fontSize: 13 };
 
 const kvRow = { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" };
-const k = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-const v = { fontSize: 12, color: "#111827", fontWeight: 900 };
+const k = { fontSize: 12, color: theme.textMuted, fontWeight: 900 };
+const v = { fontSize: 12, color: theme.text, fontWeight: 900 };
 
 const statRow = { display: "flex", gap: 10, flexWrap: "wrap" };
-const statChip = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f9fafb", fontWeight: 900, fontSize: 12, color: "#111827" };
+const statChip = { padding: "6px 10px", borderRadius: 999, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, fontWeight: 900, fontSize: 12, color: theme.text };
 
-/* Modal styles */
-const overlay = { position: "fixed", inset: 0, backgroundColor: "rgba(15,23,42,0.45)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 999, padding: 14 };
-const modal = { width: "100%", maxWidth: 980, backgroundColor: "#ffffff", borderRadius: 20, padding: "18px 18px 16px", boxShadow: "0 25px 50px rgba(15,23,42,0.35)", maxHeight: "90vh", overflowY: "auto", direction: "rtl", textAlign: "right" };
-const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 };
-const modalTitle = { fontSize: 18, fontWeight: 900, color: "#111827" };
-const xBtn = { border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#6b7280", padding: "6px 10px", borderRadius: 12 };
-const formGrid = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px 12px" };
+const modalWide = { ...modalContent, width: "100%", maxWidth: 980, padding: "18px 18px 16px", maxHeight: "90vh", overflowY: "auto" };
+const xBtn = { border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: theme.textMuted, padding: "6px 10px", borderRadius: 12 };
 const modalActions = { gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" };
 
 /* Ports UI */
 const portsGridOne = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 };
-const portChip = { border: "1px solid #e5e7eb", borderRadius: 14, padding: 10, background: "#fff", display: "flex", flexDirection: "column", gap: 8 };
+const portChip = { border: `1px solid ${theme.border}`, borderRadius: 14, padding: 10, background: theme.surface, display: "flex", flexDirection: "column", gap: 8 };
 const portHeadRow = { display: "flex", alignItems: "center", justifyContent: "space-between" };
-const portIndex = { fontWeight: 900, fontSize: 12, color: "#111827" };
+const portIndex = { fontWeight: 900, fontSize: 12, color: theme.text };
 
 const portTextareaFixed = {
   padding: "10px 12px",
   borderRadius: 14,
-  border: "1px solid #d1d5db",
+  border: `1px solid ${theme.border}`,
   fontSize: 14,
   outline: "none",
-  backgroundColor: "#ffffff",
+  backgroundColor: theme.surface,
   width: "100%",
   boxSizing: "border-box",
   height: 72,
@@ -1172,6 +1251,7 @@ const portTextareaFixed = {
   whiteSpace: "pre-wrap",
   direction: "rtl",
   textAlign: "right",
+  color: theme.text,
 };
 
-const hintBox = { border: "1px dashed #e5e7eb", borderRadius: 16, padding: 10, background: "#fff", fontSize: 12, color: "#374151", lineHeight: 1.8 };
+const hintBox = { border: `1px dashed ${theme.border}`, borderRadius: 16, padding: 10, background: theme.surface, fontSize: 12, color: theme.text, lineHeight: 1.8 };

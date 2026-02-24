@@ -91,3 +91,38 @@ export function fmtDurationDays(days) {
   if (!Number.isFinite(n) || n <= 0) return "—";
   return `${n} يوم`;
 }
+
+export function cleanText(x) {
+  const s = String(x ?? "").trim();
+  return s || "";
+}
+
+export function clampWords(s, maxWords = 4) {
+  const t = cleanText(s);
+  if (!t) return "";
+  const parts = t.split(/\s+/g).filter(Boolean);
+  return parts.slice(0, maxWords).join(" ");
+}
+
+export function asBool(x, defaultVal = true) {
+  if (x === 0 || x === "0") return false;
+  if (x === 1 || x === "1") return true;
+  if (typeof x === "boolean") return x;
+  if (x === null || x === undefined) return defaultVal;
+  return Boolean(x);
+}
+
+export function pickFirst(...vals) {
+  for (const v of vals) {
+    if (v !== undefined && v !== null) return v;
+  }
+  return null;
+}
+
+/** True if subscriber/package has an expiry and it's in the past. */
+export function isExpired(sub) {
+  const e = pickFirst(sub?.expiresAt, sub?.expires_at, sub?.expiryAt, sub?.expiry_at, sub?.expires);
+  const num = Number(e);
+  if (!Number.isFinite(num) || num <= 0) return false;
+  return num < Date.now();
+}

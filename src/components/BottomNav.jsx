@@ -1,8 +1,12 @@
 // src/components/BottomNav.jsx
 import { NavLink } from "react-router-dom";
 import { NAV_ITEMS } from "../config/routes.js";
+import { useAuth } from "../contexts/AuthContext.jsx";
 
 export default function BottomNav() {
+  const { canAccess } = useAuth();
+  const items = NAV_ITEMS.filter((item) => item.moduleKey == null || canAccess(item.moduleKey));
+
   return (
     <>
       <style>{`
@@ -18,7 +22,6 @@ export default function BottomNav() {
       <div
         style={{
           position: "fixed",
-          // ✅ رفع 10px لفوق (كان 16)
           bottom: 26,
           left: 0,
           right: 0,
@@ -29,30 +32,27 @@ export default function BottomNav() {
         }}
       >
         <nav
-          className="bn-scroll"
+          className="bn-scroll bn-nav"
           style={{
             direction: "rtl",
-            backgroundColor: "#ffffff",
-            borderRadius: 20, // ✅ أصغر شوي
-            boxShadow: "0 8px 22px rgba(0,0,0,0.10)",
-            padding: "6px 10px", // ✅ أصغر
-            maxWidth: 860, // ✅ أصغر شوي
-            width: "calc(100% - 40px)", // ✅ أقل عرض
+            backgroundColor: "var(--app-surface)",
+            borderRadius: 20,
+            boxShadow: "var(--app-shadow-md)",
+            padding: "6px 10px",
+            maxWidth: 860,
+            width: "calc(100% - 40px)",
             display: "flex",
             alignItems: "center",
             gap: 8,
             pointerEvents: "auto",
-
-            // ✅ Responsive: سحب أفقي عند الضيق
             overflowX: "auto",
             overflowY: "hidden",
             scrollSnapType: "x mandatory",
             WebkitOverflowScrolling: "touch",
-
             justifyContent: "flex-start",
           }}
         >
-          {NAV_ITEMS.map((item) => (
+          {items.map((item) => (
             <NavItem key={item.to} {...item} />
           ))}
         </nav>
@@ -66,19 +66,19 @@ function NavItem({ to, label, icon, end }) {
     <NavLink
       to={to}
       end={end}
+      className="bn-link"
       style={({ isActive }) => ({
         flex: "0 0 auto",
-        // ✅ أصغر شوي
         minWidth: 70,
         textDecoration: "none",
-        color: isActive ? "#7c3aed" : "#6b7280",
+        color: isActive ? "var(--app-primary)" : "var(--app-text-muted)",
         fontSize: 11.5,
         textAlign: "center",
         padding: "6px 8px 4px",
         borderRadius: 14,
         scrollSnapAlign: "center",
         transition: "background 0.2s ease, color 0.2s ease",
-        background: isActive ? "rgba(168,85,247,0.10)" : "transparent",
+        background: isActive ? "rgba(124,58,237,0.18)" : "transparent",
       })}
     >
       {({ isActive }) => (
@@ -93,7 +93,7 @@ function NavItem({ to, label, icon, end }) {
               height: 3,
               width: isActive ? 20 : 0,
               borderRadius: 999,
-              backgroundColor: "#a855f7",
+              backgroundColor: "var(--app-primary)",
               transition: "width 0.22s ease-out, opacity 0.22s ease-out",
               opacity: isActive ? 1 : 0,
             }}

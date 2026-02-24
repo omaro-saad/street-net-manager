@@ -1,6 +1,23 @@
 // src/pages/DistributorsPage.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useData } from "../DataContext";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { useAlert } from "../contexts/AlertContext.jsx";
+import ReadOnlyBanner from "../components/ReadOnlyBanner.jsx";
+import LoadingLogo from "../components/LoadingLogo.jsx";
+import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import LoadingOverlay from "../components/LoadingOverlay.jsx";
+import {
+  READ_ONLY_MESSAGE,
+  isApiMode,
+  apiDistributorsList,
+  apiDistributorsAdd,
+  apiDistributorsUpdate,
+  apiDistributorsDelete,
+  apiFinancePut,
+} from "../lib/api.js";
+import { getCachedDistributors, setCachedDistributors, invalidateDistributors } from "../lib/apiCache.js";
 import {
   safeArray,
   safeObj,
@@ -15,6 +32,27 @@ import {
 import { normalizeLineRow } from "../utils/lineShape.js";
 import { useResponsive } from "../hooks/useResponsive.js";
 import { theme } from "../theme.js";
+import { Field } from "../components/shared/index.js";
+import {
+  pageWrap,
+  input,
+  btnPrimary,
+  btnOutline,
+  btnTiny,
+  btnTinyPrimary,
+  btnTinyDanger,
+  miniLabel,
+  modalOverlay,
+  modalContent,
+  modalHeader,
+  modalTitle,
+  emptyText,
+  chip,
+  chipPrimary,
+  h1,
+  grid2,
+  contentCenterWrap,
+} from "../styles/shared.js";
 
 function normalizeDistributorRow(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -111,7 +149,7 @@ function createAutoInvoiceForDistributorSale({ sale, distributor }) {
 }
 
 /* ========================= Finance push (works on Web/Electron) ========================= */
-async function pushAutoInvoiceEverywhere({ gate, setData, autoInv }) {
+async function pushAutoInvoiceEverywhere({ gate, setData, autoInv, data, token }) {
   if (!autoInv?.id) return;
   try {
     if (gate?.financeDb?.table?.upsert) {
@@ -130,6 +168,15 @@ async function pushAutoInvoiceEverywhere({ gate, setData, autoInv }) {
         };
       });
     }
+    // In API mode, persist finance so FinancePage shows the new auto invoice
+    if (isApiMode() && token && data) {
+      const kv = safeObj(data?.finance?._kv);
+      const nextAuto = [autoInv, ...safeArray(kv.autoInvoices)];
+      const res = await apiFinancePut(token, { ...kv, autoInvoices: nextAuto });
+      if (res.ok && res.data && typeof setData === "function") {
+        setData((prev) => ({ ...prev, finance: { _kv: res.data }, updatedAt: nowMs() }));
+      }
+    }
   } catch (e) {
     console.warn("pushAutoInvoice failed:", e);
   }
@@ -137,9 +184,45 @@ async function pushAutoInvoiceEverywhere({ gate, setData, autoInv }) {
 
 export default function DistributorsPage() {
   const ctx = useData();
+  const { token } = useAuth();
   const data = ctx?.data;
   const setData = ctx?.setData;
   const gate = ctx?.gate;
+
+  const useDistributorsApi = isApiMode() && !!token;
+  const [distributorsFromApi, setDistributorsFromApi] = useState([]);
+  const [distributorsApiLoading, setDistributorsApiLoading] = useState(false);
+  const { execute, isLoading: actionLoading } = useAsyncAction({ minLoadingMs: 1000 });
+
+  const loadDistributorsApi = useCallback(async () => {
+    if (!useDistributorsApi || !token) return;
+    const cached = getCachedDistributors();
+    if (cached != null) {
+      setDistributorsFromApi(cached);
+      return;
+    }
+    setDistributorsApiLoading(true);
+    try {
+      const res = await apiDistributorsList(token);
+      if (res.ok && Array.isArray(res.data)) {
+        setDistributorsFromApi(res.data);
+        setCachedDistributors(res.data);
+      } else setDistributorsFromApi([]);
+    } catch {
+      setDistributorsFromApi([]);
+    } finally {
+      setDistributorsApiLoading(false);
+    }
+  }, [useDistributorsApi, token]);
+
+  useEffect(() => {
+    if (useDistributorsApi) loadDistributorsApi();
+  }, [useDistributorsApi, loadDistributorsApi]);
+
+  useEffect(() => {
+    if (!useDistributorsApi || typeof setData !== "function") return;
+    setData((prev) => ({ ...prev, distributors: { items: distributorsFromApi }, updatedAt: nowMs() }));
+  }, [useDistributorsApi, distributorsFromApi, setData]);
 
   const currency =
     gate?.financeDb?.settings?.get?.()?.currency ||
@@ -149,7 +232,7 @@ export default function DistributorsPage() {
   const { isNarrow, isMobile } = useResponsive();
 
   // ======================
-  // Local Source of Truth (NO DB)
+  // Local Source of Truth (NO DB) or from API
   // ======================
   const lines = useMemo(() => {
     const raw = data?.lines?.items ?? data?.lines ?? [];
@@ -165,9 +248,16 @@ export default function DistributorsPage() {
   }, [data?.packages]);
 
   const distributors = useMemo(() => {
+    if (useDistributorsApi) return safeArray(distributorsFromApi).map(normalizeDistributorRow).filter(Boolean);
     const raw = data?.distributors?.items ?? data?.distributors ?? [];
     return safeArray(raw).map(normalizeDistributorRow).filter(Boolean);
-  }, [data?.distributors]);
+  }, [useDistributorsApi, distributorsFromApi, data?.distributors]);
+
+  const { getLimit, canWrite } = useAuth();
+  const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showConfirmAlert } = useAlert();
+  const distributorsLimit = getLimit("distributors");
+  const distributorsAtLimit = distributorsLimit != null && distributors.length >= distributorsLimit;
+  const canWriteDistributors = canWrite("distributors");
 
   const autoInvoices = useMemo(() => {
     const fin = safeObj(data?.finance);
@@ -202,7 +292,7 @@ export default function DistributorsPage() {
   const [distForm, setDistForm] = useState(emptyDist());
 
   const openAdd = () => {
-    if (typeof setData !== "function") return alert("⚠️ setData غير متوفر في DataContext. الصفحة لن تحفظ.");
+    if (typeof setData !== "function") return showErrorAlert("setData غير متوفر في DataContext. الصفحة لن تحفظ.");
     setEditing(null);
     setDistForm(emptyDist());
     setShowAdd(true);
@@ -297,9 +387,11 @@ export default function DistributorsPage() {
 
   const saveDistributor = async (e) => {
     e.preventDefault();
+    if (!canWriteDistributors) return showReadOnlyAlert();
     const err = validateDist();
-    if (err) return alert(err);
+    if (err) return showValidationAlert(err);
 
+    await execute(async () => {
     const name = String(distForm.name || "").trim();
     const phone = String(distForm.phone || "").trim();
     const address = String(distForm.address || "").trim();
@@ -322,8 +414,22 @@ export default function DistributorsPage() {
         lineId: line ? String(line.id) : "",
         lineName: line ? (line.name || "—") : "",
       };
+      if (distributorsAtLimit) {
+        showPlanLimitAlert();
+        return;
+      }
+      if (useDistributorsApi && token) {
+        const res = await apiDistributorsAdd(token, d);
+        if (!res.ok) return showErrorAlert(res.error || "فشل إضافة الموزع.");
+        if (res.data) {
+          setDistributorsFromApi((prev) => [res.data, ...prev]);
+          invalidateDistributors();
+        }
+        closeAdd();
+        return;
+      }
       const ok = localUpsertDistributor(d.id, d, { isNew: true });
-      if (!ok) return alert("فشل الحفظ محليًا.");
+      if (!ok) return showErrorAlert("فشل الحفظ محليًا.");
       closeAdd();
       return;
     }
@@ -338,15 +444,41 @@ export default function DistributorsPage() {
       lineId: line ? String(line.id) : "",
       lineName: line ? (line.name || "—") : "",
     };
+    if (useDistributorsApi && token) {
+      const res = await apiDistributorsUpdate(token, editing.id, patch);
+      if (!res.ok) return showErrorAlert(res.error || "فشل تحديث الموزع.");
+      if (res.data) {
+        setDistributorsFromApi((prev) => prev.map((d) => (String(d.id) === String(editing.id) ? res.data : d)));
+        invalidateDistributors();
+      }
+      closeEdit();
+      return;
+    }
     const ok = localUpsertDistributor(editing.id, patch, { isNew: false });
-    if (!ok) return alert("فشل تعديل الموزع محليًا.");
+    if (!ok) return showErrorAlert("فشل تعديل الموزع محليًا.");
     closeEdit();
+    });
   };
 
   const deleteDistributor = async (id) => {
-    if (!window.confirm("حذف الموزع؟")) return;
-    const ok = localRemoveDistributor(id);
-    if (!ok) alert("فشل الحذف محليًا.");
+    if (!canWriteDistributors) return showReadOnlyAlert();
+    showConfirmAlert({
+      message: "حذف الموزع؟",
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        execute(async () => {
+          if (useDistributorsApi && token) {
+            const res = await apiDistributorsDelete(token, id);
+            if (!res.ok) return showErrorAlert(res.error || "فشل حذف الموزع.");
+            setDistributorsFromApi((prev) => prev.filter((d) => String(d.id) !== String(id)));
+            invalidateDistributors();
+            return;
+          }
+          const ok = localRemoveDistributor(id);
+          if (!ok) showErrorAlert("فشل الحذف محليًا.");
+        });
+      },
+    });
   };
 
   // ===== Invoice =====
@@ -367,7 +499,7 @@ export default function DistributorsPage() {
 
   const openInvoice = (dist) => {
     if (typeof setData !== "function" && !gate?.financeDb?.table?.upsert) {
-      alert("✖ لا يمكن حفظ الفاتورة: لا يوجد setData ولا financeDb.upsert.");
+      showErrorAlert("لا يمكن حفظ الفاتورة: لا يوجد setData ولا financeDb.upsert.");
       return;
     }
     setInvoiceFor(dist);
@@ -414,22 +546,23 @@ export default function DistributorsPage() {
     if (!invoiceFor) return;
 
     const startDate = String(invForm.startDate || "").trim();
-    if (!startDate) return alert("تاريخ البداية مطلوب.");
+    if (!startDate) return showValidationAlert("تاريخ البداية مطلوب.", "تاريخ البداية");
 
     const svc = services.find((s) => String(s.id) === String(invForm.serviceId)) || null;
-    if (!svc) return alert("اختر باقة موزع صحيحة (target=distributor).");
+    if (!svc) return showValidationAlert("اختر باقة موزع صحيحة (target=distributor).", "الباقة");
 
     const qty = toNum(invForm.qty);
-    if (qty === null || qty <= 0) return alert(`${qtyLabel} لازم يكون رقم أكبر من 0.`);
+    if (qty === null || qty <= 0) return showValidationAlert(`${qtyLabel} لازم يكون رقم أكبر من 0.`, qtyLabel);
 
     const extra = invForm.extraFees === "" ? 0 : toNum(invForm.extraFees);
     const disc = invForm.specialDiscount === "" ? 0 : toNum(invForm.specialDiscount);
     const free = invForm.freeCards === "" ? 0 : toNum(invForm.freeCards);
 
-    if (extra === null || extra < 0) return alert("الرسوم الإضافية لازم تكون رقم >= 0.");
-    if (disc === null || disc < 0) return alert("الخصومات لازم تكون رقم >= 0.");
-    if (free === null || free < 0) return alert("البطاقات المجانية لازم تكون رقم >= 0.");
+    if (extra === null || extra < 0) return showValidationAlert("الرسوم الإضافية لازم تكون رقم >= 0.", "الرسوم الإضافية");
+    if (disc === null || disc < 0) return showValidationAlert("الخصومات لازم تكون رقم >= 0.", "الخصومات");
+    if (free === null || free < 0) return showValidationAlert("البطاقات المجانية لازم تكون رقم >= 0.", "البطاقات المجانية");
 
+    await execute(async () => {
     const sale = {
       id: genId("dist_sale"),
       createdAt: nowMs(),
@@ -459,12 +592,13 @@ export default function DistributorsPage() {
     if (!autoInv?.id) autoInv = { ...autoInv, id: genId("auto") };
 
     try {
-      await pushAutoInvoiceEverywhere({ gate, setData, autoInv });
+      await pushAutoInvoiceEverywhere({ gate, setData, autoInv, data, token });
       closeInvoice();
     } catch (err) {
       console.error("saveInvoice failed:", err);
-      alert(`فشل حفظ فاتورة الموزع.\n${String(err?.message || err)}`);
+      showErrorAlert(`فشل حفظ فاتورة الموزع: ${String(err?.message || err)}`);
     }
+    });
   };
 
   // ✅ Responsive derived styles
@@ -503,7 +637,7 @@ export default function DistributorsPage() {
   );
   const gridR = useMemo(
     () => ({
-      ...grid,
+      ...grid2,
       gridTemplateColumns: isMobile ? "1fr" : isNarrow ? "1fr" : "repeat(2, minmax(0, 1fr))",
     }),
     [isMobile, isNarrow]
@@ -535,13 +669,13 @@ export default function DistributorsPage() {
     [isMobile]
   );
   const overlayR = useMemo(
-    () => ({ ...overlay, padding: isMobile ? 10 : 14, alignItems: isMobile ? "stretch" : "center" }),
+    () => ({ ...modalOverlay, padding: isMobile ? 10 : 14, alignItems: isMobile ? "stretch" : "center" }),
     [isMobile]
   );
   const modalR = useMemo(
     () => ({
-      ...modal,
-      maxWidth: isMobile ? "100%" : modal.maxWidth,
+      ...modalWide,
+      maxWidth: isMobile ? "100%" : 980,
       borderRadius: isMobile ? 16 : 20,
       padding: isMobile ? "12px 12px 12px" : "18px 18px 16px",
       maxHeight: isMobile ? "96vh" : "90vh",
@@ -549,7 +683,7 @@ export default function DistributorsPage() {
     [isMobile]
   );
   const formGridR = useMemo(
-    () => ({ ...formGrid, gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))" }),
+    () => ({ ...grid2, gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))" }),
     [isMobile]
   );
   const modalActionsR = useMemo(
@@ -561,8 +695,21 @@ export default function DistributorsPage() {
     [isMobile]
   );
 
+  const displayLoading = useMinLoadingTime(useDistributorsApi && distributorsApiLoading && distributorsFromApi.length === 0);
+  if (displayLoading) {
+    return (
+      <div style={pageWrapR}>
+        <div style={contentCenterWrap}>
+          <LoadingLogo />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={pageWrapR}>
+      <LoadingOverlay visible={actionLoading} />
+      {!canWriteDistributors && <ReadOnlyBanner />}
       <div style={topRowR}>
         <div>
           <h1 style={{ ...h1, fontSize: isMobile ? 22 : 26 }}>الموزعين</h1>
@@ -577,17 +724,22 @@ export default function DistributorsPage() {
         </div>
 
         <div style={rightTopR}>
-          <button style={btnPrimaryR} onClick={openAdd}>
+          <button
+            style={btnPrimaryR}
+            onClick={() => { if (distributorsAtLimit) { showPlanLimitAlert(); return; } openAdd(); }}
+            disabled={!canWriteDistributors || actionLoading}
+            title={!canWriteDistributors ? READ_ONLY_MESSAGE : undefined}
+          >
             + إضافة موزع
           </button>
           <div style={miniStatsR}>
-            <span style={chip2}>
+            <span style={chip}>
               الخطوط : <b>{lines.length}</b>
             </span>
-            <span style={chip2}>
+            <span style={chip}>
               خدمات الموزع : <b>{services.length}</b>
             </span>
-            <span style={chip2}>
+            <span style={chip}>
               الموزعين : <b>{distributors.length}</b>
             </span>
           </div>
@@ -617,7 +769,9 @@ export default function DistributorsPage() {
 
       <div style={gridR}>
         {filtered.length === 0 ? (
-          <div style={empty}>لا يوجد موزعين حسب البحث.</div>
+          <div style={contentCenterWrap}>
+            <div style={emptyText}>لا يوجد موزعين حسب البحث.</div>
+          </div>
         ) : (
           filtered.map((d) => {
             const distInvoices = autoInvoices.filter(
@@ -631,20 +785,20 @@ export default function DistributorsPage() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <div style={cardTitle}>{d.name || "—"}</div>
                     <div style={cardMeta}>
-                      <span style={chip2}>📞 {d.phone || "—"}</span>
-                      <span style={chip2}>📍 {addrText}</span>
-                      <span style={chip}>{d.lineId ? `🧵 الخط: ${d.lineName || "—"}` : "🧵 بدون خط"}</span>
+                      <span style={chip}>📞 {d.phone || "—"}</span>
+                      <span style={chip}>📍 {addrText}</span>
+                      <span style={chipPrimary}>{d.lineId ? `🧵 الخط: ${d.lineName || "—"}` : "🧵 بدون خط"}</span>
                     </div>
                   </div>
 
                   <div style={actionsRowR}>
-                    <button style={btnTiny} onClick={() => openEdit(d)}>
+                    <button style={btnTiny} onClick={() => openEdit(d)} disabled={!canWriteDistributors || actionLoading} title={!canWriteDistributors ? READ_ONLY_MESSAGE : undefined}>
                       تعديل
                     </button>
-                    <button style={btnTinyPrimary} onClick={() => openInvoice(d)} title="إنشاء فاتورة موزع">
+                    <button style={btnTinyPrimary} onClick={() => openInvoice(d)} disabled={!canWriteDistributors || actionLoading} title={!canWriteDistributors ? READ_ONLY_MESSAGE : undefined}>
                       + فاتورة
                     </button>
-                    <button style={btnTinyDanger} onClick={() => deleteDistributor(d.id)}>
+                    <button style={btnTinyDanger} onClick={() => deleteDistributor(d.id)} disabled={!canWriteDistributors || actionLoading} title={!canWriteDistributors ? READ_ONLY_MESSAGE : undefined}>
                       حذف
                     </button>
                   </div>
@@ -733,7 +887,7 @@ export default function DistributorsPage() {
               <button type="button" style={btnOutlineR} onClick={closeAdd}>
                 إلغاء
               </button>
-              <button type="submit" style={btnModalPrimaryR}>
+              <button type="submit" style={btnModalPrimaryR} disabled={actionLoading}>
                 حفظ
               </button>
             </div>
@@ -802,7 +956,7 @@ export default function DistributorsPage() {
               <button type="button" style={btnOutlineR} onClick={closeEdit}>
                 إلغاء
               </button>
-              <button type="submit" style={btnModalPrimaryR}>
+              <button type="submit" style={btnModalPrimaryR} disabled={actionLoading}>
                 حفظ التعديل
               </button>
             </div>
@@ -902,7 +1056,7 @@ export default function DistributorsPage() {
               <button type="button" style={btnOutlineR} onClick={closeInvoice}>
                 إلغاء
               </button>
-              <button type="submit" style={btnModalPrimaryR}>
+              <button type="submit" style={btnModalPrimaryR} disabled={actionLoading}>
                 حفظ الفاتورة
               </button>
             </div>
@@ -918,10 +1072,10 @@ function Modal({ overlayRef, title, onClose, children, overlayStyle, modalStyle 
   return (
     <div
       ref={overlayRef}
-      style={overlayStyle || overlay}
+      style={overlayStyle || modalOverlay}
       onMouseDown={(e) => e.target === overlayRef.current && onClose()}
     >
-      <div style={modalStyle || modal}>
+      <div style={modalStyle || modalWide}>
         <div style={modalHeader}>
           <div style={modalTitle}>{title}</div>
           <button style={xBtn} onClick={onClose}>
@@ -934,60 +1088,28 @@ function Modal({ overlayRef, title, onClose, children, overlayStyle, modalStyle 
   );
 }
 
-function Field({ label, children }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={miniLabel}>{label}</div>
-      {children}
-    </div>
-  );
-}
-
-/* ===== Styles ===== */
-const pageWrap = { display: "flex", flexDirection: "column", gap: 14, height: "100%", overflowY: "auto", paddingBottom: 10 };
+/* ===== Styles (page-specific; shared tokens imported above) ===== */
 const topRow = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
 const rightTop = { display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end" };
-const h1 = { fontSize: 26, fontWeight: 900, color: "#111827", margin: 0 };
-const filtersCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12 };
+const filtersCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12 };
 const filtersRow = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" };
 const miniStats = { display: "flex", gap: 8, flexWrap: "wrap" };
-const miniLabel = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-const tinyHint = { marginTop: 6, fontSize: 12, color: "#6b7280", lineHeight: 1.7 };
-const warnText = { marginTop: 10, fontSize: 12, color: "#b45309", fontWeight: 900, lineHeight: 1.7 };
-const input = {
-  padding: "10px 12px",
-  borderRadius: 14,
-  border: "1px solid #d1d5db",
-  fontSize: 14,
-  outline: "none",
-  backgroundColor: "#ffffff",
-  width: "100%",
-  boxSizing: "border-box",
-};
-const grid = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 };
-const empty = { fontSize: 13, color: "#9ca3af", padding: "6px 2px" };
-const card = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+const tinyHint = { marginTop: 6, fontSize: 12, color: theme.textMuted, lineHeight: 1.7 };
+const warnText = { marginTop: 10, fontSize: 12, color: theme.warning, fontWeight: 900, lineHeight: 1.7 };
+
+const modalWide = { ...modalContent, width: "100%", maxWidth: 980, padding: "18px 18px 16px", maxHeight: "90vh", overflowY: "auto" };
+const xBtn = { border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: theme.textMuted, padding: "6px 10px", borderRadius: 12 };
+
+const card = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12, display: "flex", flexDirection: "column", gap: 10 };
 const cardTop = { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" };
-const cardTitle = { fontSize: 16, fontWeight: 900, color: "#111827" };
+const cardTitle = { fontSize: 16, fontWeight: 900, color: theme.text };
 const cardMeta = { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" };
-const chip2 = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#111827", fontWeight: 900, fontSize: 12 };
-const chip = { padding: "6px 10px", borderRadius: 999, border: "1px solid #c7d2fe", background: "#eef2ff", color: "#3730a3", fontWeight: 900, fontSize: 12 };
 const cardBody = { display: "grid", gap: 6 };
 const row = { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" };
-const k = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-const v = { fontSize: 12, color: "#111827", fontWeight: 900 };
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
-const btnOutline = { padding: "10px 16px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-const btnTiny = { padding: "8px 12px", borderRadius: 999, border: "1px solid #e5e7eb", backgroundColor: "#fff", color: "#111827", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap", opacity: 1 };
-const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const overlay = { position: "fixed", inset: 0, backgroundColor: "rgba(15,23,42,0.45)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 999, padding: 14 };
-const modal = { width: "100%", maxWidth: 980, backgroundColor: "#ffffff", borderRadius: 20, padding: "18px 18px 16px", boxShadow: "0 25px 50px rgba(15,23,42,0.35)", maxHeight: "90vh", overflowY: "auto" };
-const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 };
-const modalTitle = { fontSize: 18, fontWeight: 900, color: "#111827" };
-const xBtn = { border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#6b7280", padding: "6px 10px", borderRadius: 12 };
-const formGrid = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px 12px" };
+const k = { fontSize: 12, color: theme.textMuted, fontWeight: 900 };
+const v = { fontSize: 12, color: theme.text, fontWeight: 900 };
+
 const modalActions = { gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6 };
-const previewBox = { gridColumn: "1 / -1", border: "1px dashed #e5e7eb", background: "#fff", borderRadius: 18, padding: 12 };
-const previewTitle = { fontSize: 13, fontWeight: 900, color: "#111827", marginBottom: 8 };
-const previewRow = { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, color: "#374151", lineHeight: 1.7 };
+const previewBox = { gridColumn: "1 / -1", border: `1px dashed ${theme.border}`, background: theme.surface, borderRadius: 18, padding: 12 };
+const previewTitle = { fontSize: 13, fontWeight: 900, color: theme.text, marginBottom: 8 };
+const previewRow = { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, color: theme.text, lineHeight: 1.7 };

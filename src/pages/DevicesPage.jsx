@@ -1,9 +1,35 @@
 // src/pages/DevicesPage.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useData } from "../DataContext";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { useAlert } from "../contexts/AlertContext.jsx";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
+import LoadingOverlay from "../components/LoadingOverlay.jsx";
+import LoadingLogo from "../components/LoadingLogo.jsx";
+import ReadOnlyBanner from "../components/ReadOnlyBanner.jsx";
+import { READ_ONLY_MESSAGE, isApiMode, apiInventoryGet, apiInventorySet } from "../lib/api.js";
 import { safeArray, safeObj, nowMs } from "../utils/helpers.js";
 import { useResponsive } from "../hooks/useResponsive.js";
 import { theme } from "../theme.js";
+import {
+  pageWrap,
+  h1,
+  input,
+  btnPrimary,
+  btnOutline,
+  btnTinyPrimary,
+  btnTinyDanger,
+  miniLabel,
+  modalOverlay,
+  modalContent,
+  modalHeader,
+  modalTitle,
+  emptyText,
+  grid2,
+  textMuted,
+  contentCenterWrap,
+} from "../styles/shared.js";
 
 const DEFAULT_SECTION_SUGGESTIONS = {
   "مستلزمات كهربائية": ["قاطع", "فيوز", "مقبس", "فيشة", "شريط كهرباء", "محول", "ريليه", "لمبة"],
@@ -25,11 +51,15 @@ function money(n) {
 }
 export default function DevicesPage() {
   const { data, setData } = useData();
+  const { token, getLimit, canWrite } = useAuth();
+  const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showConfirmAlert } = useAlert();
+
+  const useInventoryApi = isApiMode() && !!token;
 
   const { isNarrow, isMobile } = useResponsive();
 
   // =========================
-  // In-memory only (NO DB)
+  // Source: data.inventory (in-memory or synced from API)
   // =========================
   const inventory = useMemo(
     () => data?.inventory || { warehouses: [], sections: [], items: [] },
@@ -39,19 +69,69 @@ export default function DevicesPage() {
   const warehouses = safeArray(inventory.warehouses);
   const sections = safeArray(inventory.sections);
   const items = safeArray(inventory.items);
+  const devicesStoresLimit = getLimit("devicesStores");
+  const devicesStoresAtLimit = devicesStoresLimit != null && warehouses.length >= devicesStoresLimit;
+  const canWriteDevices = canWrite("devices");
 
-  // Fallback updater for DataContext
-  const updateInventory = (patch) => {
-    setData((prev) => ({
-      ...prev,
-      inventory: {
-        warehouses: prev.inventory?.warehouses || [],
-        sections: prev.inventory?.sections || [],
-        items: prev.inventory?.items || [],
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+
+  // Load inventory from API when in API mode
+  useEffect(() => {
+    if (!useInventoryApi || !token) {
+      setInventoryLoading(false);
+      return;
+    }
+    setInventoryLoading(true);
+    let cancelled = false;
+    (async () => {
+      const res = await apiInventoryGet(token);
+      if (cancelled) return;
+      setInventoryLoading(false);
+      if (res.ok && res.data) setData((prev) => ({ ...prev, inventory: res.data, updatedAt: nowMs() }));
+    })();
+    return () => { cancelled = true; };
+  }, [useInventoryApi, token, setData]);
+
+  // Updater: local context + persist to API when in API mode (sync for read path)
+  const updateInventory = useCallback(
+    (patch) => {
+      const nextInv = {
+        warehouses: inventory.warehouses ?? [],
+        sections: inventory.sections ?? [],
+        items: inventory.items ?? [],
         ...patch,
-      },
-    }));
-  };
+      };
+      setData((prev) => ({ ...prev, inventory: nextInv, updatedAt: nowMs() }));
+      if (useInventoryApi && token) {
+        apiInventorySet(token, nextInv).then((res) => {
+          if (!res.ok) showErrorAlert(res.error || "فشل حفظ المخزون.");
+          else if (res.data) setData((prev) => ({ ...prev, inventory: res.data, updatedAt: nowMs() }));
+        });
+      }
+    },
+    [inventory, useInventoryApi, token, setData, showErrorAlert]
+  );
+
+  // Async updater for use inside execute (loading + min time)
+  const applyInventoryUpdate = useCallback(
+    async (patch) => {
+      const nextInv = {
+        warehouses: inventory.warehouses ?? [],
+        sections: inventory.sections ?? [],
+        items: inventory.items ?? [],
+        ...patch,
+      };
+      setData((prev) => ({ ...prev, inventory: nextInv, updatedAt: nowMs() }));
+      if (useInventoryApi && token) {
+        const res = await apiInventorySet(token, nextInv);
+        if (!res.ok) showErrorAlert(res.error || "فشل حفظ المخزون.");
+        else if (res.data) setData((prev) => ({ ...prev, inventory: res.data, updatedAt: nowMs() }));
+      }
+    },
+    [inventory, useInventoryApi, token, setData, showErrorAlert]
+  );
+
+  const { execute, isLoading: actionLoading } = useAsyncAction({ minLoadingMs: 1000 });
 
   // =========================
   // ✅ State
@@ -139,9 +219,17 @@ export default function DevicesPage() {
 
   const saveWarehouse = async (e) => {
     e.preventDefault();
+    if (!canWriteDevices) {
+      showReadOnlyAlert();
+      return;
+    }
+    if (devicesStoresAtLimit) {
+      showPlanLimitAlert();
+      return;
+    }
     const name = String(warehouseForm.name || "").trim();
     const location = String(warehouseForm.location || "").trim();
-    if (!name) return alert("اكتب اسم المخزن.");
+    if (!name) return showValidationAlert("اكتب اسم المخزن.", "اسم المخزن");
 
     const newW = {
       id: `wh_${nowMs()}_${Math.floor(Math.random() * 100000)}`,
@@ -151,37 +239,45 @@ export default function DevicesPage() {
       updatedAt: nowMs(),
     };
 
-    try {
-      updateInventory({ warehouses: [newW, ...safeArray(data?.inventory?.warehouses)] });
-      setActiveWarehouseId(newW.id);
-      openWarehouseModal(newW.id);
-      closeAddWarehouse();
-    } catch (err) {
-      alert(String(err?.message || err));
-    }
+    await execute(async () => {
+      try {
+        await applyInventoryUpdate({ warehouses: [newW, ...safeArray(data?.inventory?.warehouses)] });
+        setActiveWarehouseId(newW.id);
+        openWarehouseModal(newW.id);
+        closeAddWarehouse();
+      } catch (err) {
+        showErrorAlert(String(err?.message || err));
+      }
+    });
   };
 
   const deleteWarehouse = async (id) => {
+    if (!canWriteDevices) return showReadOnlyAlert();
     const secCount = sections.filter((s) => s.warehouseId === id).length;
     const itemCount = items.filter((x) => x.warehouseId === id).length;
     const msg =
       secCount > 0 || itemCount > 0
         ? `هذا المخزن يحتوي على ${secCount} أقسام و ${itemCount} قطع. حذف المخزن سيحذف كل شيء داخله. متابعة؟`
         : "حذف المخزن؟";
-    if (!window.confirm(msg)) return;
-
-    try {
-      updateInventory({
-        warehouses: warehouses.filter((w) => w.id !== id),
-        sections: sections.filter((s) => s.warehouseId !== id),
-        items: items.filter((x) => x.warehouseId !== id),
-      });
-
-      if (activeWarehouseId === id) setActiveWarehouseId("");
-      if (warehouseModalOpen && warehouseModalId === id) closeWarehouseModal();
-    } catch (err) {
-      alert(String(err?.message || err));
-    }
+    showConfirmAlert({
+      message: msg,
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        execute(async () => {
+          try {
+            await applyInventoryUpdate({
+              warehouses: warehouses.filter((w) => w.id !== id),
+              sections: sections.filter((s) => s.warehouseId !== id),
+              items: items.filter((x) => x.warehouseId !== id),
+            });
+            if (activeWarehouseId === id) setActiveWarehouseId("");
+            if (warehouseModalOpen && warehouseModalId === id) closeWarehouseModal();
+          } catch (err) {
+            showErrorAlert(String(err?.message || err));
+          }
+        });
+      },
+    });
   };
 
   // Add section
@@ -190,7 +286,7 @@ export default function DevicesPage() {
 
   const openAddSection = (forcedWarehouseId) => {
     const whId = forcedWarehouseId || activeWarehouseId || warehouses[0]?.id || "";
-    if (!whId) return alert("أضف مخزن أولاً.");
+    if (!whId) return showErrorAlert("أضف مخزن أولاً.");
     setSectionForm({ warehouseId: whId, name: "" });
     setShowAddSection(true);
   };
@@ -198,10 +294,11 @@ export default function DevicesPage() {
 
   const saveSection = async (e) => {
     e.preventDefault();
+    if (!canWriteDevices) return showReadOnlyAlert();
     const warehouseId = sectionForm.warehouseId;
     const name = String(sectionForm.name || "").trim();
-    if (!warehouseId) return alert("اختر مخزن.");
-    if (!name) return alert("اكتب اسم القسم.");
+    if (!warehouseId) return showValidationAlert("اختر مخزن.", "المخزن");
+    if (!name) return showValidationAlert("اكتب اسم القسم.", "اسم القسم");
 
     const newS = {
       id: `sec_${nowMs()}_${Math.floor(Math.random() * 100000)}`,
@@ -216,25 +313,31 @@ export default function DevicesPage() {
       setActiveWarehouseId(warehouseId);
       closeAddSection();
     } catch (err) {
-      alert(String(err?.message || err));
+      showErrorAlert(String(err?.message || err));
     }
   };
 
   const deleteSection = async (id) => {
+    if (!canWriteDevices) return showReadOnlyAlert();
     const itemCount = items.filter((x) => x.sectionId === id).length;
     const msg = itemCount > 0 ? `هذا القسم يحتوي ${itemCount} قطع. حذف القسم سيحذف القطع داخله. متابعة؟` : "حذف القسم؟";
-    if (!window.confirm(msg)) return;
-
-    try {
-      updateInventory({
-        sections: sections.filter((s) => s.id !== id),
-        items: items.filter((x) => x.sectionId !== id),
-      });
-
-      if (filterSectionId === id) setFilterSectionId("all");
-    } catch (err) {
-      alert(String(err?.message || err));
-    }
+    showConfirmAlert({
+      message: msg,
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        execute(async () => {
+          try {
+            await applyInventoryUpdate({
+              sections: sections.filter((s) => s.id !== id),
+              items: items.filter((x) => x.sectionId !== id),
+            });
+            if (filterSectionId === id) setFilterSectionId("all");
+          } catch (err) {
+            showErrorAlert(String(err?.message || err));
+          }
+        });
+      },
+    });
   };
 
   // Add/Edit item
@@ -275,7 +378,7 @@ export default function DevicesPage() {
 
   const openAddItem = (forcedWarehouseId) => {
     const whId = forcedWarehouseId || activeWarehouseId || warehouses[0]?.id || "";
-    if (!whId) return alert("أضف مخزن أولاً.");
+    if (!whId) return showErrorAlert("أضف مخزن أولاً.");
 
     const secs = sections
       .filter((s) => s.warehouseId === whId)
@@ -333,6 +436,7 @@ export default function DevicesPage() {
 
   const saveItem = async (e) => {
     e.preventDefault();
+    if (!canWriteDevices) return showReadOnlyAlert();
 
     const warehouseId = itemForm.warehouseId;
     const sectionId = itemForm.sectionId;
@@ -346,13 +450,13 @@ export default function DevicesPage() {
     const unitPrice = hasPrice ? safeNum(itemForm.unitPrice, NaN) : null;
     const note = String(itemForm.note || "").trim();
 
-    if (!warehouseId) return alert("اختر مخزن.");
-    if (!sectionId) return alert("اختر قسم.");
-    if (!itemName) return alert("اكتب اسم القطعة.");
-    if (!Number.isFinite(quantity) || quantity < 0) return alert("الكمية غير صحيحة.");
+    if (!warehouseId) return showValidationAlert("اختر مخزن.", "المخزن");
+    if (!sectionId) return showValidationAlert("اختر قسم.", "القسم");
+    if (!itemName) return showValidationAlert("اكتب اسم القطعة.", "اسم القطعة");
+    if (!Number.isFinite(quantity) || quantity < 0) return showValidationAlert("الكمية غير صحيحة.", "الكمية");
 
     if (hasPrice) {
-      if (!Number.isFinite(unitPrice) || unitPrice < 0) return alert("سعر الوحدة غير صحيح.");
+      if (!Number.isFinite(unitPrice) || unitPrice < 0) return showValidationAlert("سعر الوحدة غير صحيح.", "سعر الوحدة");
     }
 
     const payload = {
@@ -371,29 +475,39 @@ export default function DevicesPage() {
       updatedAt: nowMs(),
     };
 
-    try {
-      if (itemMode === "edit" && editingItemId) {
-        updateInventory({
-          items: items.map((x) => (x.id === editingItemId ? { ...x, ...payload } : x)),
-        });
-      } else {
-        updateInventory({ items: [{ ...payload }, ...items] });
-      }
+    await execute(async () => {
+      try {
+        if (itemMode === "edit" && editingItemId) {
+          await applyInventoryUpdate({
+            items: items.map((x) => (x.id === editingItemId ? { ...x, ...payload } : x)),
+          });
+        } else {
+          await applyInventoryUpdate({ items: [{ ...payload }, ...items] });
+        }
 
-      setActiveWarehouseId(warehouseId);
-      closeItem();
-    } catch (err) {
-      alert(String(err?.message || err));
-    }
+        setActiveWarehouseId(warehouseId);
+        closeItem();
+      } catch (err) {
+        showErrorAlert(String(err?.message || err));
+      }
+    });
   };
 
   const deleteItem = async (id) => {
-    if (!window.confirm("حذف القطعة؟")) return;
-    try {
-      updateInventory({ items: items.filter((x) => x.id !== id) });
-    } catch (err) {
-      alert(String(err?.message || err));
-    }
+    if (!canWriteDevices) return showReadOnlyAlert();
+    showConfirmAlert({
+      message: "حذف القطعة؟",
+      confirmLabel: "حذف",
+      onConfirm: () => {
+        execute(async () => {
+          try {
+            await applyInventoryUpdate({ items: items.filter((x) => x.id !== id) });
+          } catch (err) {
+            showErrorAlert(String(err?.message || err));
+          }
+        });
+      },
+    });
   };
 
   // ===== Warehouse Details Modal =====
@@ -525,7 +639,7 @@ export default function DevicesPage() {
 
   const overlayR = useMemo(
     () => ({
-      ...overlay,
+      ...modalOverlay,
       padding: isMobile ? 10 : 14,
       alignItems: isMobile ? "stretch" : "center",
     }),
@@ -534,9 +648,9 @@ export default function DevicesPage() {
 
   const modalR = useMemo(
     () => ({
-      ...modal,
+      ...modalWide,
       borderRadius: isMobile ? 16 : 20,
-      padding: isMobile ? "12px 12px 12px" : modal.padding,
+      padding: isMobile ? "12px 12px 12px" : "18px 18px 16px",
       maxHeight: isMobile ? "96vh" : "92vh",
     }),
     [isMobile]
@@ -598,7 +712,7 @@ export default function DevicesPage() {
 
   const formGridR = useMemo(
     () => ({
-      ...formGrid,
+      ...grid2,
       gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))",
     }),
     [isMobile]
@@ -648,20 +762,37 @@ export default function DevicesPage() {
     [isMobile]
   );
 
+  const displayLoading = useMinLoadingTime(useInventoryApi && inventoryLoading && warehouses.length === 0);
+  if (displayLoading) {
+    return (
+      <div style={pageWrapR}>
+        <div style={contentCenterWrap}>
+          <LoadingLogo />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={pageWrapR}>
+      <LoadingOverlay visible={actionLoading} />
+      {!canWriteDevices && <ReadOnlyBanner />}
       {/* Header */}
       <div style={topRowR}>
         <div>
           <h1 style={{ ...h1, fontSize: isMobile ? 22 : 26 }}>المعدات والمخازن</h1>
-          <p style={p}>السعر اختياري — إذا فعّلته، بنحسب قيمة القطعة تلقائياً (الكمية × سعر الوحدة).</p>
+          <p style={textMuted}>السعر اختياري — إذا فعّلته، بنحسب قيمة القطعة تلقائياً (الكمية × سعر الوحدة).</p>
         </div>
 
         <div style={headerActionsR}>
-          <button style={btnPrimaryR} onClick={openAddWarehouse}>
+          <button
+            style={btnPrimaryR}
+            onClick={() => { if (devicesStoresAtLimit) { showPlanLimitAlert(); return; } openAddWarehouse(); }}
+            disabled={!canWriteDevices || actionLoading}
+            title={!canWriteDevices ? READ_ONLY_MESSAGE : undefined}
+          >
             + إضافة مخزن
           </button>
-
         </div>
       </div>
 
@@ -671,14 +802,16 @@ export default function DevicesPage() {
           <button
             style={{ ...btnOutlineR }}
             onClick={() => openAddSection(activeWarehouseId || warehouses[0]?.id)}
-            disabled={!canActions}
+            disabled={!canActions || !canWriteDevices || actionLoading}
+            title={!canWriteDevices ? READ_ONLY_MESSAGE : undefined}
           >
             + إضافة قسم
           </button>
           <button
             style={{ ...btnOutlineR }}
             onClick={() => openAddItem(activeWarehouseId || warehouses[0]?.id)}
-            disabled={!canActions}
+            disabled={!canActions || !canWriteDevices || actionLoading}
+            title={!canWriteDevices ? READ_ONLY_MESSAGE : undefined}
           >
             + إضافة قطعة
           </button>
@@ -692,7 +825,9 @@ export default function DevicesPage() {
       {/* Warehouses Cards */}
       <div style={cardsGridR}>
         {warehouses.length === 0 ? (
-          <div style={empty}>لا يوجد مخازن. ابدأ بإضافة مخزن.</div>
+          <div style={contentCenterWrap}>
+            <div style={emptyText}>لا يوجد مخازن. ابدأ بإضافة مخزن.</div>
+          </div>
         ) : (
           warehouses.map((w) => {
             const sum = getWarehouseSummary(w.id);
@@ -715,7 +850,7 @@ export default function DevicesPage() {
                     <button style={btnTinyPrimaryR} onClick={() => openWarehouseModal(w.id)}>
                       فتح
                     </button>
-                    <button style={btnTinyDangerR} onClick={() => deleteWarehouse(w.id)}>
+                    <button style={btnTinyDangerR} onClick={() => deleteWarehouse(w.id)} disabled={actionLoading}>
                       حذف
                     </button>
                   </div>
@@ -802,14 +937,16 @@ export default function DevicesPage() {
             <div style={sectionStrip}>
               <div style={panelTitle}>الأقسام</div>
               {sectionsForWarehouse.length === 0 ? (
-                <div style={emptySmall}>لا يوجد أقسام داخل هذا المخزن.</div>
+                <div style={contentCenterWrap}>
+                  <div style={emptyText}>لا يوجد أقسام داخل هذا المخزن.</div>
+                </div>
               ) : (
                 <div style={sectionsGridR}>
                   {sectionsForWarehouse.map((s) => (
                     <div key={s.id} style={sectionCard}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                         <div style={{ fontWeight: 900, color: "#111827" }}>{s.name}</div>
-                        <button style={btnTinyDanger} onClick={() => deleteSection(s.id)}>
+                        <button style={btnTinyDanger} onClick={() => deleteSection(s.id)} disabled={actionLoading}>
                           حذف
                         </button>
                       </div>
@@ -831,7 +968,9 @@ export default function DevicesPage() {
 
               <div style={itemsList}>
                 {itemsForWarehouse.length === 0 ? (
-                  <div style={emptySmall}>لا يوجد قطع حسب البحث/الفلترة.</div>
+                  <div style={contentCenterWrap}>
+                    <div style={emptyText}>لا يوجد قطع حسب البحث/الفلترة.</div>
+                  </div>
                 ) : (
                   itemsForWarehouse.map((it) => {
                     const unitPrice = it.hasPrice ? safeNum(it.unitPrice, NaN) : NaN;
@@ -862,10 +1001,10 @@ export default function DevicesPage() {
                         </div>
 
                         <div style={itemActionsR}>
-                          <button style={btnTinyOutlineR} onClick={() => openEditItem(it)}>
+                          <button style={btnTinyOutlineR} onClick={() => openEditItem(it)} disabled={actionLoading}>
                             تعديل
                           </button>
-                          <button style={btnTinyDangerR} onClick={() => deleteItem(it.id)}>
+                          <button style={btnTinyDangerR} onClick={() => deleteItem(it.id)} disabled={actionLoading}>
                             حذف
                           </button>
                         </div>
@@ -913,10 +1052,10 @@ export default function DevicesPage() {
             </Field>
 
             <div style={modalActionsR}>
-              <button type="button" style={btnOutlineR} onClick={closeAddWarehouse}>
+              <button type="button" style={btnOutlineR} onClick={closeAddWarehouse} disabled={actionLoading}>
                 إلغاء
               </button>
-              <button type="submit" style={btnPrimaryR}>
+              <button type="submit" style={btnPrimaryR} disabled={actionLoading}>
                 إضافة
               </button>
             </div>
@@ -960,10 +1099,10 @@ export default function DevicesPage() {
             </Field>
 
             <div style={modalActionsR}>
-              <button type="button" style={btnOutlineR} onClick={closeAddSection}>
+              <button type="button" style={btnOutlineR} onClick={closeAddSection} disabled={actionLoading}>
                 إلغاء
               </button>
-              <button type="submit" style={btnPrimaryR}>
+              <button type="submit" style={btnPrimaryR} disabled={actionLoading}>
                 إضافة
               </button>
             </div>
@@ -1102,10 +1241,10 @@ export default function DevicesPage() {
             </Field>
 
             <div style={modalActionsR}>
-              <button type="button" style={btnOutlineR} onClick={closeItem}>
+              <button type="button" style={btnOutlineR} onClick={closeItem} disabled={actionLoading}>
                 إلغاء
               </button>
-              <button type="submit" style={btnPrimaryR}>
+              <button type="submit" style={btnPrimaryR} disabled={actionLoading}>
                 {itemMode === "edit" ? "حفظ" : "إضافة"}
               </button>
             </div>
@@ -1121,10 +1260,10 @@ function Modal({ overlayRef, title, onClose, children, wide, overlayStyle, modal
   return (
     <div
       ref={overlayRef}
-      style={overlayStyle || overlay}
+      style={overlayStyle || modalOverlay}
       onMouseDown={(e) => e.target === overlayRef.current && onClose()}
     >
-      <div style={{ ...(modalStyle || modal), maxWidth: wide ? 1200 : 920 }}>
+      <div style={{ ...(modalStyle || modalWide), maxWidth: wide ? 1200 : 920 }}>
         <div style={headerStyle || modalHeader}>
           <div style={modalTitle}>{title}</div>
           <button style={xBtn} onClick={onClose}>
@@ -1152,9 +1291,9 @@ function badge(kind) {
     borderRadius: "999px",
     fontWeight: 900,
     fontSize: "12px",
-    border: "1px solid #e5e7eb",
-    background: "#f9fafb",
-    color: "#111827",
+    border: `1px solid ${theme.border}`,
+    background: theme.surfaceAlt,
+    color: theme.text,
     whiteSpace: "nowrap",
   };
   if (kind === "sale") return { ...base, background: "#eef2ff", borderColor: "#c7d2fe", color: "#3730a3" };
@@ -1162,16 +1301,12 @@ function badge(kind) {
   return base;
 }
 
-/* ===== Styles ===== */
-const pageWrap = { display: "flex", flexDirection: "column", gap: 14, height: "100%", overflowY: "auto", paddingBottom: 10 };
-
+/* ===== Page-specific styles (shared tokens imported above) ===== */
 const topRow = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
-const h1 = { fontSize: 26, fontWeight: 900, color: "#111827", margin: 0 };
-const p = { fontSize: 14, color: "#6b7280", lineHeight: 1.6, margin: "6px 0 0" };
 const actionBar = {
-  border: "1px solid #e5e7eb",
+  border: `1px solid ${theme.border}`,
   borderRadius: 18,
-  background: "#fff",
+  background: theme.surface,
   padding: 12,
   display: "flex",
   justifyContent: "space-between",
@@ -1179,7 +1314,7 @@ const actionBar = {
   flexWrap: "wrap",
   alignItems: "center",
 };
-const actionHint = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
+const actionHint = { fontSize: 12, color: theme.textMuted, fontWeight: 900 };
 
 const warnPill = {
   padding: "8px 12px",
@@ -1192,60 +1327,48 @@ const warnPill = {
   whiteSpace: "nowrap",
 };
 
-const btnPrimary = { padding: "10px 16px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, boxShadow: "0 12px 30px rgba(15,23,42,0.15)", whiteSpace: "nowrap" };
-const btnOutline = { padding: "10px 16px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 14, whiteSpace: "nowrap" };
-const btnTinyPrimary = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: theme.primary, color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTinyOutline = { padding: "8px 12px", borderRadius: 999, border: "1px solid #d1d5db", backgroundColor: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
-const btnTinyDanger = { padding: "8px 12px", borderRadius: 999, border: "none", backgroundColor: "#dc2626", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
+const btnTinyOutline = { padding: "8px 12px", borderRadius: 999, border: `1px solid ${theme.border}`, backgroundColor: theme.surface, color: theme.text, fontWeight: 900, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" };
 
 const cardsGrid = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 };
-const empty = { fontSize: 13, color: "#9ca3af", padding: "10px 4px" };
 
-const warehouseCard = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 14, display: "flex", flexDirection: "column", gap: 10 };
+const warehouseCard = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 14, display: "flex", flexDirection: "column", gap: 10 };
 const warehouseCardTop = { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
-const warehouseTitle = { fontSize: 16, fontWeight: 900, color: "#111827" };
-const warehouseMeta = { fontSize: 12, color: "#6b7280", lineHeight: 1.6 };
+const warehouseTitle = { fontSize: 16, fontWeight: 900, color: theme.text };
+const warehouseMeta = { fontSize: 12, color: theme.textMuted, lineHeight: 1.6 };
 const warehousePills = { display: "flex", gap: 8, flexWrap: "wrap" };
-const warehouseCardHint = { fontSize: 12, color: "#6b7280", lineHeight: 1.7, borderTop: "1px dashed #e5e7eb", paddingTop: 10 };
+const warehouseCardHint = { fontSize: 12, color: theme.textMuted, lineHeight: 1.7, borderTop: `1px dashed ${theme.border}`, paddingTop: 10 };
 
-const pill = { padding: "6px 10px", borderRadius: 999, border: "1px solid #e5e7eb", background: "#f9fafb", fontWeight: 900, fontSize: 12, color: "#111827" };
+const pill = { padding: "6px 10px", borderRadius: 999, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, fontWeight: 900, fontSize: 12, color: theme.text };
 const pillStrong = { ...pill, borderColor: "#c7d2fe", background: "#eef2ff", color: "#3730a3" };
 
 const filtersRow = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" };
-const miniLabel = { fontSize: 12, color: "#6b7280", fontWeight: 900 };
-const input = { padding: "10px 12px", borderRadius: 12, border: "1px solid #d1d5db", fontSize: 14, outline: "none", backgroundColor: "#ffffff", width: "100%", boxSizing: "border-box" };
 
+const modalWide = { ...modalContent, width: "100%", maxHeight: "92vh", overflowY: "auto", padding: "18px 18px 16px" };
 const modalTopInfo = { display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" };
 const modalActionsBar = { display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-start" };
 
-const blockTitle = { fontSize: 18, fontWeight: 900, color: "#111827" };
-const blockSub = { fontSize: 13, color: "#6b7280", marginTop: 2 };
+const blockTitle = { fontSize: 18, fontWeight: 900, color: theme.text };
+const blockSub = { fontSize: 13, color: theme.textMuted, marginTop: 2 };
 
 const totalsBar = { display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" };
 
-const panelTitle = { fontSize: 14, fontWeight: 900, color: "#111827" };
+const panelTitle = { fontSize: 14, fontWeight: 900, color: theme.text };
 const sectionStrip = { display: "flex", flexDirection: "column", gap: 10 };
 const sectionsGrid = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 };
-const sectionCard = { border: "1px solid #e5e7eb", borderRadius: 16, background: "#f9fafb", padding: 12 };
-const emptySmall = { fontSize: 13, color: "#9ca3af", padding: "6px 2px" };
+const sectionCard = { border: `1px solid ${theme.border}`, borderRadius: 16, background: theme.surfaceAlt, padding: 12 };
 
-const listWrap = { border: "1px solid #e5e7eb", borderRadius: 18, background: "#fff", padding: 12 };
+const listWrap = { border: `1px solid ${theme.border}`, borderRadius: 18, background: theme.surface, padding: 12 };
 const listHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 };
-const listTitle = { fontSize: 15, fontWeight: 900, color: "#111827" };
-const listCount = { fontSize: 13, fontWeight: 900, color: "#6b7280" };
+const listTitle = { fontSize: 15, fontWeight: 900, color: theme.text };
+const listCount = { fontSize: 13, fontWeight: 900, color: theme.textMuted };
 
 const itemsList = { display: "flex", flexDirection: "column", gap: 10 };
-const itemRow = { border: "1px solid #e5e7eb", borderRadius: 16, background: "#fff", padding: 12, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
-const itemName = { fontWeight: 900, color: "#111827" };
-const itemMeta = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: "#6b7280", lineHeight: 1.6 };
-const noteLine = { fontSize: 12, color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 12, padding: "8px 10px", lineHeight: 1.6 };
+const itemRow = { border: `1px solid ${theme.border}`, borderRadius: 16, background: theme.surface, padding: 12, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" };
+const itemName = { fontWeight: 900, color: theme.text };
+const itemMeta = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: theme.textMuted, lineHeight: 1.6 };
+const noteLine = { fontSize: 12, color: theme.text, background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 12, padding: "8px 10px", lineHeight: 1.6 };
 
-const toggle = { display: "flex", gap: 10, alignItems: "center", fontWeight: 900, color: "#111827", flexWrap: "wrap" };
+const toggle = { display: "flex", gap: 10, alignItems: "center", fontWeight: 900, color: theme.text, flexWrap: "wrap" };
 
-const overlay = { position: "fixed", inset: 0, backgroundColor: "rgba(15,23,42,0.45)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 999, padding: 14 };
-const modal = { width: "100%", backgroundColor: "#ffffff", borderRadius: 20, padding: "18px 18px 16px", boxShadow: "0 25px 50px rgba(15,23,42,0.35)", maxHeight: "92vh", overflowY: "auto" };
-const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" };
-const modalTitle = { fontSize: 18, fontWeight: 900, color: "#111827" };
-const xBtn = { border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#6b7280", padding: "6px 10px", borderRadius: 12 };
-const formGrid = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px 12px" };
+const xBtn = { border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: theme.textMuted, padding: "6px 10px", borderRadius: 12 };
 const modalActions = { gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" };

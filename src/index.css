@@ -1,4 +1,4 @@
-/* src/index.css */
+/* src/index.css — global + light/dark theme (CSS variables) */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -9,11 +9,118 @@ html {
   direction: rtl;
 }
 
-body {
-  font-family: "Tajawal", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif !important;
+/* ========== Light theme (default) ========== */
+:root {
+  --app-primary: #8b5cf6;
+  --app-primary-alt: #6366f1;
+  --app-primary-gradient: #8b5cf6; /* light: solid; dark overrides to gradient */
+  --app-text: #111827;
+  --app-text-muted: #6b7280;
+  --app-text-light: #9ca3af;
+  --app-bg: #f3f4f6;
+  --app-surface: #ffffff;
+  --app-surface-alt: #f9fafb;
+  --app-border: #e5e7eb;
+  --app-success: #10b981;
+  --app-warning: #f59e0b;
+  --app-error: #ef4444;
+  --app-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  --app-shadow-md: 0 8px 22px rgba(0, 0, 0, 0.1);
+  --app-radius: 18px;
+  --app-radius-sm: 12px;
+}
 
-  background-color: #f3f4f6; /* رمادي فاتح */
-  color: #111827; /* أسود */
+body {
+  font-family: "Tajawal", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  background-color: var(--app-bg);
+  color: var(--app-text);
   line-height: 1.5;
+}
+
+.app-wrap {
+  background-color: var(--app-bg);
+  color: var(--app-text);
+}
+.app-inner {
+  background-color: var(--app-surface);
+  box-shadow: var(--app-shadow);
+}
+
+/* ========== Dark theme — gradient purple mode (clear, not too black) ========== */
+html.theme-dark {
+  --app-primary: #a78bfa;
+  --app-primary-alt: #818cf8;
+  --app-primary-gradient: linear-gradient(135deg, #7c3aed 0%, #8b5cf6 35%, #a855f7 65%, #6366f1 100%);
+  --app-text: #f3f4f6;
+  --app-text-muted: #d1d5db;
+  --app-text-light: #9ca3af;
+  --app-bg: #1e1b2e;
+  --app-surface: #252235;
+  --app-surface-alt: #2a2638;
+  --app-border: #3d3850;
+  --app-success: #34d399;
+  --app-warning: #fbbf24;
+  --app-error: #f87171;
+  --app-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  --app-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+html.theme-dark body,
+.theme-dark.app-wrap {
+  background-color: var(--app-bg) !important;
+  color: var(--app-text) !important;
+}
+
+.theme-dark .app-inner {
+  background-color: var(--app-surface) !important;
+  box-shadow: var(--app-shadow) !important;
+}
+
+/* Dark: form controls and inputs */
+.theme-dark .app-inner input,
+.theme-dark .app-inner select,
+.theme-dark .app-inner textarea {
+  background-color: var(--app-surface-alt) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+.theme-dark .app-inner input::placeholder,
+.theme-dark .app-inner textarea::placeholder {
+  color: var(--app-text-light);
+}
+
+/* Dark: modals and cards that use theme vars already get colors from CSS variables */
+.theme-dark .app-inner h1,
+.theme-dark .app-inner h2,
+.theme-dark .app-inner h3 {
+  color: var(--app-text) !important;
+}
+.theme-dark .app-inner p,
+.theme-dark .app-inner label {
+  color: var(--app-text-muted);
+}
+.theme-dark .app-inner a:not(.bn-link) {
+  color: var(--app-primary);
+}
+
+/* React Flow / map canvas dark */
+.theme-dark .react-flow__background {
+  background-color: var(--app-surface-alt) !important;
+}
+.theme-dark .react-flow__node {
+  background-color: var(--app-surface) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+.theme-dark .react-flow__edge-path {
+  stroke: var(--app-border);
+}
+.theme-dark .react-flow__controls {
+  background: var(--app-surface) !important;
+  border-color: var(--app-border) !important;
+}
+.theme-dark .react-flow__controls button {
+  background: var(--app-surface-alt) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
 }

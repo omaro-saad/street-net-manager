@@ -4,9 +4,6 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// license
-import { getDeviceCode, checkActivation, activateWithLicense, clearActivation } from "./license.mjs";
-
 // NO DB — All data is in-memory via DataContext
 
 const __filename = fileURLToPath(import.meta.url);
@@ -146,16 +143,18 @@ function applyBasicCsp() {
     const headers = details.responseHeaders || {};
     if (isDev()) return callback({ responseHeaders: headers });
 
+    // connect-src: 'self' + API origins so login/data work when app is file:// or loaded from dev
     const csp = [
       "default-src 'self'",
       "img-src 'self' data: blob:",
       "style-src 'self' 'unsafe-inline'",
       "script-src 'self'",
-      "connect-src 'self'",
+      "connect-src 'self' https: http://localhost:* http://127.0.0.1:*",
       "font-src 'self' data:",
       "object-src 'none'",
       "base-uri 'self'",
       "frame-ancestors 'none'",
+      "form-action 'self'",
     ].join("; ");
 
     headers["Content-Security-Policy"] = [csp];
@@ -470,13 +469,7 @@ function registerIpcOnce() {
   IPC_REGISTERED = true;
 
   // ✅ DEV-SAFE: clean old handlers
-  const resetHandlers = [
-    "app:ping",
-    "license:getDeviceCode",
-    "license:check",
-    "license:activate",
-    "license:deactivate",
-  ];
+  const resetHandlers = ["app:ping"];
   for (const ch of resetHandlers) {
     try {
       ipcMain.removeHandler(ch);
@@ -484,32 +477,6 @@ function registerIpcOnce() {
   }
 
   ipcMain.handle("app:ping", async () => "pong");
-
-  // ===== License IPC =====
-  ipcMain.handle("license:getDeviceCode", async () => getDeviceCode());
-  ipcMain.handle("license:check", async () => checkActivation(app.getPath("userData")));
-
-  ipcMain.handle("license:activate", async (_e, licenseObj) => {
-    const res = await activateWithLicense(app.getPath("userData"), licenseObj);
-    try {
-      if (res?.ok && mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("license:changed", { ok: true });
-      }
-    } catch {}
-    return res;
-  });
-
-  // ✅ Logout: delete activation file only (keep DB)
-  ipcMain.handle("license:deactivate", async () => {
-    // clearActivation لازم ترجع {ok:true} أو شيء مشابه
-    const res = await Promise.resolve(clearActivation(app.getPath("userData")));
-    try {
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("license:changed", { ok: false, reason: "DEACTIVATED" });
-      }
-    } catch {}
-    return res ?? { ok: true };
-  });
 
   // ===== No DB — data is in-memory via DataContext =====
   // Stub IPC handlers (renderer uses DataContext, these are unused)

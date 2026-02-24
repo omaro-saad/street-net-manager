@@ -12,10 +12,20 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "server": "cd server && npm start",
+    "server:dev": "cd server && npm run dev",
     "electron:dev": "concurrently -k \"vite --port 5173 --strictPort\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "dist": "npm run build && electron-builder --win --x64",
     "electron:build": "npm run dist",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "supabase:init": "supabase init",
+    "supabase:login": "supabase login",
+    "supabase:link": "supabase link",
+    "supabase:push": "supabase db push",
+    "create-user": "cd server && npm run create-user",
+    "seed": "cd server && node scripts/seed-test-data.js",
+    "reset-db": "cd server && npm run reset-db",
+    "extend-subscription": "cd server && npm run extend-subscription"
   },
   "dependencies": {
     "better-sqlite3": "^12.5.0",
@@ -45,6 +55,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "supabase": "^1.200.3",
     "vite": "^7.2.4",
     "wait-on": "^9.0.3"
   },

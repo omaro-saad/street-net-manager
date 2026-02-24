@@ -174,7 +174,7 @@ export default function SplashScreen() {
         .title{
           font-size: 40px;
           font-weight: 800;
-          color: #111827;
+          color: black;
           text-align:center;
           user-select:none;
         }

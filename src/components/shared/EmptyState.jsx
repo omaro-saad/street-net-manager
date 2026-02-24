@@ -4,7 +4,7 @@ export default function EmptyState({ message = "لا توجد بيانات", ico
       style={{
         textAlign: "center",
         padding: 40,
-        color: "#6b7280",
+        color: "var(--app-text-muted)",
         fontSize: 15,
       }}
     >
