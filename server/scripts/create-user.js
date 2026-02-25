@@ -20,6 +20,7 @@ import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import { addDurationDays, durationToDays } from "../lib/subscription.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "../.env") });
@@ -99,22 +100,11 @@ function parseArgs() {
   };
 }
 
-/** Add duration to start date. monthly=30, 3months=90, yearly=365. 0 = plan finished (ends_at = start). */
+/** Add exact full days (24h each). User sees that many full days remaining at start; when time remaining reaches 0, subscription is expired. */
 function addDuration(startDate, duration) {
-  const d = new Date(startDate);
-  const days =
-    duration === "monthly"
-      ? 30
-      : duration === "3months"
-        ? 90
-        : duration === "yearly"
-          ? 365
-          : Number(duration);
-  if (Number.isFinite(days) && days > 0) {
-    d.setDate(d.getDate() + days);
-    return d.toISOString();
-  }
-  return d.toISOString();
+  const days = durationToDays(duration);
+  if (days <= 0) return new Date(startDate).toISOString();
+  return addDurationDays(startDate, days);
 }
 
 async function main() {

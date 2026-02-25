@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useData } from "../DataContext";
 import { useNavigate } from "react-router-dom";
-import { isApiMode } from "../lib/api.js";
+import { isApiMode, apiGetTips, apiMarkTipsSeen } from "../lib/api.js";
 import LoadingLogo from "../components/LoadingLogo.jsx";
 import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import HomeTipsModal from "../components/HomeTipsModal.jsx";
 
 /* =========================
    Helpers
@@ -49,10 +51,40 @@ function isExpired(sub) {
 /* =========================
    Home
 ========================= */
+const TIPS_PAGE_KEY = "home";
+
 export default function HomePage() {
   const { data, gate, initDone } = useData() || {};
   const navigate = useNavigate();
+  const { token, isLoggedIn } = useAuth();
   const displayLoading = useMinLoadingTime(isApiMode() && !initDone);
+
+  // One-time tips: show only when user has never seen home tips (first login, any device).
+  const [tipsChecked, setTipsChecked] = useState(false);
+  const [showTips, setShowTips] = useState(false);
+
+  useEffect(() => {
+    if (!isApiMode() || !token || !isLoggedIn || tipsChecked) return;
+    apiGetTips(token)
+      .then((res) => {
+        setTipsChecked(true);
+        if (res.ok && !res.tips[TIPS_PAGE_KEY]) setShowTips(true);
+      })
+      .catch(() => setTipsChecked(true));
+  }, [token, isLoggedIn, tipsChecked]);
+
+  const handleTipsDone = () => {
+    if (isApiMode() && token) {
+      apiMarkTipsSeen(token, TIPS_PAGE_KEY).catch(() => {});
+    }
+    setShowTips(false);
+  };
+
+  const handleTipsLinkClick = (path) => {
+    handleTipsDone();
+    navigate(path);
+  };
+
   if (displayLoading) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", minHeight: "40vh" }}>
@@ -243,6 +275,11 @@ export default function HomePage() {
 
   return (
     <div className={`hp-root ${entered ? "hp-entered" : ""}`} style={{ height: "100%" }}>
+      <HomeTipsModal
+        open={showTips}
+        onDone={handleTipsDone}
+        onLinkClick={handleTipsLinkClick}
+      />
       <div className="hp-wrap">
         {/* القسم الأيمن */}
         <div className="hp-right">

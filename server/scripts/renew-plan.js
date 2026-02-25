@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 /**
- * CLI: Renew (or replace) user plan. If a live plan is running, replaces it with the new plan (with warning).
+ * CLI: Renew plan with Oadmin username + password + secret code.
+ * Validates credentials and secret code, then renews/reactivates subscription.
  *
- * Usage: node renew-subscription.js <OadminUsername> <secretCode> <plan> <duration>
+ * Usage: node renew-plan.js <OadminUsername> <OadminPassword> <secretCode> <plan> <duration>
  *
  * plan: basic | plus | pro
- * duration: monthly (30 days) | 3months (90 days) | yearly (365 days) | or number = days (e.g. 30, 90)
- * Days: monthly=30, 3months=90, yearly=365 (count from 30 not 29).
+ * duration: monthly (30 days) | 3months (90 days) | yearly (365 days) | or number of days
+ * Uses exact 24h days: 30 days = 30 full days remaining at start.
  *
  * Requires: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY in server/.env
  */
 import { createClient } from "@supabase/supabase-js";
 import bcrypt from "bcryptjs";
-import readline from "readline";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -24,19 +24,23 @@ dotenv.config({ path: path.join(__dirname, "../.env") });
 const SIX_DIGIT = /^[0-9]{6}$/;
 const PLANS = ["basic", "plus", "pro"];
 const DURATION_PRESETS = ["monthly", "3months", "yearly"];
-const NUMERIC_DAYS = /^[0-9]{1,5}$/;
 
 function parseArgs() {
   const argv = process.argv.slice(2);
-  if (argv.length < 4) {
-    console.error("Usage: renew-subscription.js <OadminUsername> <secretCode> <plan> <duration>");
+  if (argv.length < 5) {
+    console.error("Usage: renew-plan.js <OadminUsername> <OadminPassword> <secretCode> <plan> <duration>");
+    console.error("  Validates Oadmin password + secret code, then renews subscription.");
     console.error("  plan: basic | plus | pro");
     console.error("  duration: monthly (30) | 3months (90) | yearly (365) | or number of days");
     process.exit(1);
   }
-  const [username, secretCode, plan, duration] = argv;
+  const [username, password, secretCode, plan, duration] = argv;
   if (!username?.trim()) {
     console.error("Oadmin username is required.");
+    process.exit(1);
+  }
+  if (!password || String(password).length < 4) {
+    console.error("Oadmin password must be at least 4 characters.");
     process.exit(1);
   }
   if (!SIX_DIGIT.test(String(secretCode ?? ""))) {
@@ -50,27 +54,19 @@ function parseArgs() {
     process.exit(1);
   }
   const isPreset = DURATION_PRESETS.includes(dRaw);
-  const isNumericDays = NUMERIC_DAYS.test(dRaw);
+  const isNumericDays = /^[0-9]{1,5}$/.test(dRaw);
   if (!isPreset && !isNumericDays) {
     console.error("Duration must be: monthly | 3months | yearly | or a number (days).");
     process.exit(1);
   }
   return {
     username: username.trim(),
+    password: String(password),
     secretCode: String(secretCode).trim(),
     plan: p,
     durationRaw: dRaw,
     isNumericDays,
   };
-}
-
-
-function confirm(rl, message) {
-  return new Promise((resolve) => {
-    rl.question(message, (answer) => {
-      resolve(/^y|yes|نعم$/i.test(String(answer).trim()));
-    });
-  });
 }
 
 async function main() {
@@ -83,17 +79,22 @@ async function main() {
 
   const args = parseArgs();
   const supabase = createClient(supabaseUrl, supabaseKey);
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   const { data: account, error: accErr } = await supabase
     .from("accounts")
-    .select("id, org_id, username, reset_code_hash, role")
+    .select("id, org_id, username, password_hash, reset_code_hash, role")
     .ilike("username", args.username)
     .eq("role", "oadmin")
     .maybeSingle();
 
   if (accErr || !account) {
     console.error("Oadmin account not found or error:", accErr?.message || "not found");
+    process.exit(1);
+  }
+
+  const validPassword = await bcrypt.compare(args.password, account.password_hash || "");
+  if (!validPassword) {
+    console.error("Invalid password.");
     process.exit(1);
   }
 
@@ -114,21 +115,7 @@ async function main() {
     process.exit(1);
   }
 
-  const now = new Date();
-  const nowISO = now.toISOString();
-  const isLive = sub.status === "active" && sub.ends_at && new Date(sub.ends_at) > now;
-  if (isLive) {
-    console.log("\nتحذير: يوجد اشتراك فعّال حالياً. سيتم استبداله بالخطة الجديدة.");
-    const ok = await confirm(rl, "متابعة؟ (y/n): ");
-    rl.close();
-    if (!ok) {
-      console.log("تم الإلغاء.");
-      process.exit(0);
-    }
-  } else {
-    rl.close();
-  }
-
+  const nowISO = new Date().toISOString();
   const days = durationToDays(args.durationRaw);
   const newEndsAt = days > 0 ? addDurationDays(nowISO, days) : nowISO;
   const durationForDb = args.isNumericDays ? "monthly" : args.durationRaw;

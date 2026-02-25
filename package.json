@@ -25,7 +25,9 @@
     "create-user": "cd server && npm run create-user",
     "seed": "cd server && node scripts/seed-test-data.js",
     "reset-db": "cd server && npm run reset-db",
-    "extend-subscription": "cd server && npm run extend-subscription"
+    "extend-subscription": "cd server && npm run extend-subscription",
+    "renew-plan": "cd server && npm run renew-plan",
+    "renew-subscription": "cd server && npm run renew-subscription"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

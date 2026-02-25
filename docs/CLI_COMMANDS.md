@@ -91,3 +91,58 @@ npm run reset-db
 ```
 
 You will be asked: `Delete ALL users, organizations, subscriptions, lines and permissions? (y/n):` — type `y` or `yes` to proceed.
+
+---
+
+## GitHub CLI (gh) — Publishing
+
+Requires [GitHub CLI](https://cli.github.com/) installed and logged in (`gh auth login`). Run from **project root**.
+
+### Trigger deploy to GitHub Pages
+
+Run the "Deploy to GitHub Pages" workflow manually (same as **Actions** → **Deploy to GitHub Pages** → **Run workflow**):
+
+```bash
+gh workflow run "Deploy to GitHub Pages"
+```
+
+Check run status:
+
+```bash
+gh run list --workflow="Deploy to GitHub Pages" --limit 5
+gh run watch
+```
+
+### Create and publish a release (tag + notes)
+
+Create a new tag, push it, and open a release in the browser to add notes and publish:
+
+```bash
+# Create tag (e.g. v3.1.0) and push
+git tag v3.1.0
+git push origin v3.1.0
+
+# Create a draft release for that tag (opens in browser to add notes and publish)
+gh release create v3.1.0 --draft
+```
+
+Or create a release from the CLI with title and notes:
+
+```bash
+gh release create v3.1.0 --title "v3.1.0" --notes "Release notes here."
+```
+
+### Publish a release with build artifacts (e.g. Windows installer)
+
+Build the app, then create a release and upload the built files:
+
+```bash
+npm run build && npm run dist
+gh release create v3.1.0 dist/*.exe --title "v3.1.0" --notes "Release notes."
+```
+
+To upload to an existing release:
+
+```bash
+gh release upload v3.1.0 dist/*.exe
+```

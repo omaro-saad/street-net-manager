@@ -16,6 +16,19 @@ export function isApiMode() {
   return false;
 }
 
+const VISIT_TRACKED_KEY = "snm_visit_tracked";
+
+/** Call once per session to count a visitor (for dashboard analytics). */
+export function trackVisit() {
+  if (typeof sessionStorage === "undefined") return;
+  if (sessionStorage.getItem(VISIT_TRACKED_KEY)) return;
+  const base = API_URL || (typeof window !== "undefined" ? window.location.origin : "");
+  if (!base) return;
+  fetch(`${base}/api/track-visit`, { method: "GET", keepalive: true }).catch(() => {}).finally(() => {
+    try { sessionStorage.setItem(VISIT_TRACKED_KEY, "1"); } catch {}
+  });
+}
+
 /** Login. 403 with code "subscription_expired" is expected for expired accounts and is handled by redirecting to the subscription-expired page (browser may still log the 403 in console). */
 export async function apiLogin(username, password) {
   const res = await fetch(`${API_URL || ""}/api/auth/login`, {
@@ -91,6 +104,31 @@ export async function apiUpdateUsername(token, newUsername, secretCode) {
     return { ok: false, error: data?.error || "فشل تحديث اسم المستخدم." };
   }
   return { ok: true, user: data.user };
+}
+
+/** Get which tips the user has seen (per page). Returns { ok: true, tips: { home: true, ... } }. */
+export async function apiGetTips(token) {
+  const res = await fetch(`${API_URL || ""}/api/auth/tips`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: data?.error || "فشل جلب التلميحات." };
+  return { ok: true, tips: data.tips || {} };
+}
+
+/** Mark tips as seen for a page (e.g. 'home'). One-time per user per page. */
+export async function apiMarkTipsSeen(token, pageKey) {
+  const res = await fetch(`${API_URL || ""}/api/auth/tips/seen`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ pageKey: String(pageKey).trim() }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: data?.error || "فشل حفظ التلميحات." };
+  return { ok: true };
 }
 
 /** Reset password with username + secret reset code + new password (no auth). */

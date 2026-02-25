@@ -1,11 +1,13 @@
 /**
  * JWT auth + plan/subscription resolution.
  * Uses DB accounts when SUPABASE_URL is set, else in-memory.
+ * Expired subscriptions are rejected (403 subscription_expired).
  */
 import jwt from "jsonwebtoken";
 import { config } from "../config.js";
 import { accounts } from "../db/accounts-loader.js";
 import { getLimit, getEnabledModulesForPlan, isModuleEnabled, PLANS } from "../config/plans.js";
+import { isSubscriptionExpired } from "../lib/subscription.js";
 
 const UPGRADE_MSG = "لقد وصلت لحد الخطة. يرجى الترقية.";
 
@@ -49,10 +51,7 @@ export async function requirePlan(req, res, next) {
   if (!org || !sub) {
     return res.status(403).json({ ok: false, error: "لا يوجد اشتراك." });
   }
-  const now = Date.now();
-  const endsAtMs = sub.endsAt ? new Date(sub.endsAt).getTime() : null;
-  const isExpired = sub.status !== "active" || (endsAtMs != null && endsAtMs <= now);
-  if (isExpired) {
+  if (isSubscriptionExpired(sub)) {
     return res.status(403).json({
       ok: false,
       code: "subscription_expired",

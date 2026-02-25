@@ -1,5 +1,69 @@
 # Supabase setup
 
+## No Docker: use hosted Supabase only
+
+You can use Supabase **without Docker**. Use only your **hosted project** on supabase.com:
+
+1. **Create a project** at [supabase.com](https://supabase.com) → New project.
+2. **Link the repo** to that project (one time):
+   ```bash
+   npx supabase login
+   npx supabase link --project-ref <your-project-ref>
+   ```
+   (Project ref is in the dashboard URL: `https://app.supabase.com/project/<project-ref>`.)
+3. **Apply migrations to the cloud** (no Docker):
+   ```bash
+   npx supabase db push
+   ```
+   This sends the SQL in `supabase/migrations/` to your **hosted** database. You will be prompted for your database password if needed.
+4. **Set env vars** in `server/.env`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (from dashboard → Settings → API).
+5. **Create users** with the app CLI (uses the cloud DB):
+   ```bash
+   npm run create-user -- <username> <password> <secretCode> <plan> <duration>
+   ```
+
+**Do not run** `supabase start`, `supabase db reset`, or `supabase stop` — those require Docker for a local Supabase stack. With the steps above, everything runs against your hosted project and no Docker is needed.
+
+---
+
+## Reset hosted DB (no Docker)
+
+To **fully reset** your hosted Supabase database (drop all tables and re-apply migrations), use the app script instead of `supabase db reset`:
+
+1. **Get the database connection string**  
+   Supabase Dashboard → your project → **Settings** → **Database** → **Connection string** → **URI**.  
+   Use **Session mode**, copy the URI, and replace `[YOUR-PASSWORD]` with your database password.
+
+2. **Add to `server/.env`:**
+   ```env
+   SUPABASE_DB_URL=postgresql://postgres.[project-ref]:YOUR_PASSWORD@aws-0-xx.pooler.supabase.com:5432/postgres
+   ```
+
+3. **Install server dependencies** (if you haven’t):
+   ```bash
+   cd server && npm install
+   ```
+
+4. **Run the reset** (from the repo root or from `server/`):
+   ```bash
+   cd server && npm run reset-db-remote
+   ```
+   Type `yes` when prompted. This drops the `public` schema and re-runs all SQL in `supabase/migrations/`.
+
+No Docker or Supabase CLI link is required. After the reset, create users again with `npm run create-user`.
+
+**If you get "permission denied for table organizations"** when running `create-user` (e.g. after a manual schema change or a reset without the script): run the following in **Supabase Dashboard → SQL Editor** so the API roles can access tables:
+
+```sql
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+```
+
+Then run `create-user` again.
+
+---
+
 ## What's next (after linking)
 
 1. **Add environment variables** (see [Environment variables](#environment-variables) below) in:
@@ -91,12 +155,7 @@ You will be prompted for the database password (set when creating the project).
 npx supabase db push
 ```
 
-Or for local development with a local Supabase stack:
-
-```bash
-npx supabase start
-npx supabase db reset
-```
+**Optional (requires Docker):** For a full local Supabase stack you would run `npx supabase start` and `npx supabase db reset`. If you prefer no Docker, use only the hosted project and `npx supabase db push` as in the [No Docker](#no-docker-use-hosted-supabase-only) section above.
 
 ---
 
@@ -121,10 +180,13 @@ Create or edit `.env` in the **server** folder:
 ```env
 SUPABASE_URL=https://xxxxxxxx.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+# Optional, for reset-db-remote only (Dashboard → Settings → Database → Connection string URI):
+# SUPABASE_DB_URL=postgresql://postgres.[ref]:[PASSWORD]@...supabase.com:5432/postgres
 ```
 
 - Use **Project URL** for `SUPABASE_URL`.
 - Use **service_role** key for `SUPABASE_SERVICE_ROLE_KEY` (never in frontend).
+- **SUPABASE_DB_URL** is only needed for `npm run reset-db-remote` (full DB reset without Docker).
 
 ---
 

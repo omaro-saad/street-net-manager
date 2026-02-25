@@ -1,19 +1,11 @@
-// Shown when subscription is finished (at login or when already in app). User details in boxes, message, Login + Contact support buttons.
-// If user opens this page with a valid (non-expired) subscription, redirect to Home.
-import { useEffect, useState } from "react";
+// Shown when subscription is expired. User cannot access any app page; only allowed navigation is to Login.
 import { useNavigate, useLocation } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext.jsx";
 import { ROUTES } from "../config/routes.js";
 import { theme } from "../theme.js";
-import { SUPPORT_EMAIL, SUPPORT_MAILTO, apiMe, isApiMode } from "../lib/api.js";
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "../lib/api.js";
 import { btnPrimary, btnOutline } from "../styles/shared.js";
 
-function isSubscriptionExpired(subscription) {
-  if (!subscription || subscription.status !== "active") return true;
-  const endsAt = subscription.endsAt ? new Date(subscription.endsAt).getTime() : null;
-  if (endsAt == null) return false;
-  return endsAt <= Date.now();
-}
+const SUBSCRIPTION_EXPIRED_FLAG = "subscription_expired_shown";
 
 const PLAN_LABELS = { basic: "أساسي", plus: "بلس", pro: "برو" };
 const DURATION_LABELS = { monthly: "شهري", "3months": "٣ أشهر", yearly: "سنوي" };
@@ -124,13 +116,20 @@ export default function SubscriptionExpiredPage() {
   const org = payload?.org ?? null;
   const subscription = payload?.subscription ?? null;
 
+  const goToLogin = () => {
+    try {
+      sessionStorage.removeItem(SUBSCRIPTION_EXPIRED_FLAG);
+    } catch {}
+    navigate(ROUTES.LOGIN, { replace: true });
+  };
+
   return (
     <div style={pageRoot}>
       <div style={wrap}>
         <div style={titleBox}>
           <h1 style={{ ...title, color: theme.error, marginBottom: 4 }}>انتهى الاشتراك</h1>
           <p style={{ fontSize: 14, color: theme.textMuted, margin: 0 }}>
-            لا يمكنك تسجيل الدخول حتى يتم تجديد الاشتراك من قبل الدعم. جميع بياناتك محفوظة.
+            لا يمكنك استخدام التطبيق حتى يتم تجديد الاشتراك. جميع بياناتك محفوظة. للعودة إلى تسجيل الدخول (بعد التجديد) استخدم الزر أدناه.
           </p>
         </div>
 
@@ -190,9 +189,9 @@ export default function SubscriptionExpiredPage() {
           <button
             type="button"
             style={{ ...btnPrimary, width: "100%", padding: "14px 16px", fontSize: 15 }}
-            onClick={() => navigate(ROUTES.HOME, { replace: true })}
+            onClick={goToLogin}
           >
-            تسجيل الدخول
+            العودة إلى تسجيل الدخول
           </button>
           <a
             href={SUPPORT_MAILTO}

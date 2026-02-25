@@ -13,6 +13,7 @@ import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import { addDurationDays, durationToDays } from "../lib/subscription.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "../.env") });
@@ -52,20 +53,6 @@ function parseArgs() {
   };
 }
 
-function addDays(startDate, duration) {
-  const d = new Date(startDate);
-  const days =
-    duration === "monthly"
-      ? 30
-      : duration === "3months"
-        ? 90
-        : duration === "yearly"
-          ? 365
-          : Number(duration);
-  const add = Number.isFinite(days) && days >= 0 ? days : 30;
-  d.setDate(d.getDate() + add);
-  return d.toISOString();
-}
 
 async function main() {
   const supabaseUrl = process.env.SUPABASE_URL;
@@ -108,8 +95,8 @@ async function main() {
   }
 
   const fromDate = sub.ends_at && new Date(sub.ends_at) > new Date() ? sub.ends_at : new Date().toISOString();
-  const durationForAdd = args.isNumericDays ? args.newDurationRaw : args.newDurationRaw;
-  const newEndsAt = addDays(fromDate, durationForAdd);
+  const days = durationToDays(args.newDurationRaw);
+  const newEndsAt = days > 0 ? addDurationDays(fromDate, days) : fromDate;
 
   const { error: updateErr } = await supabase
     .from("subscriptions")

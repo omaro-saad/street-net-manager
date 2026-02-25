@@ -3,8 +3,10 @@ import helmet from "helmet";
 import cors from "cors";
 import { config } from "./config.js";
 import { loginLimiter, apiLimiter } from "./middleware/rateLimit.js";
+import { incrementVisits } from "./db/visits-store.js";
 import authRoutes from "./routes/auth.js";
 import apiRoutes from "./routes/api.js";
+import dashboardRoutes from "./routes/dashboard.js";
 
 const app = express();
 
@@ -53,8 +55,16 @@ app.get("/", (req, res) =>
   })
 );
 app.get("/health", (req, res) => res.json({ ok: true, service: "street-net-manager-api" }));
+
+// Public: count a visit (called by the main app on load, once per session)
+app.get("/api/track-visit", (req, res) => {
+  incrementVisits();
+  res.status(204).end();
+});
+
 app.use("/api", apiLimiter);
 app.use("/api/auth", authRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 app.use("/api", apiRoutes);
 app.use((req, res) => {
   const path = `${req.method} ${req.originalUrl || req.url}`;

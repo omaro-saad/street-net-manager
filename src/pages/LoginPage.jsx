@@ -46,6 +46,9 @@ export default function LoginPage() {
           org: res?.org ?? null,
           subscription: res?.subscription ?? null,
         };
+        try {
+          sessionStorage.setItem("subscription_expired_shown", "1");
+        } catch {}
         navigate(ROUTES.SUBSCRIPTION_EXPIRED, { state: { subscriptionExpired: payload }, replace: true });
         return;
       }

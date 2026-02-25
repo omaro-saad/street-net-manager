@@ -182,6 +182,50 @@ export function AuthProvider({ children }) {
   const plan = me?.plan ?? "pro";
   const limits = me?.limits ?? null;
   const usage = me?.usage ?? {};
+  const subscription = me?.subscription ?? null;
+  const isSubscriptionExpired = useMemo(() => {
+    if (!subscription || subscription.status !== "active") return true;
+    const endsAt = subscription.endsAt ?? subscription.ends_at;
+    if (endsAt == null) return false;
+    const endsAtMs = new Date(endsAt).getTime();
+    return Number.isFinite(endsAtMs) && endsAtMs <= Date.now();
+  }, [subscription]);
+
+  // When me says subscription is expired (e.g. time passed), clear session and set payload so AuthGate shows Subscription Expired
+  useEffect(() => {
+    if (!isSubscriptionExpired || !me || !currentUser) return;
+    writeStoredAuth(null);
+    setToken(null);
+    setCurrentUser(null);
+    setMe(null);
+    setSubscriptionExpiredPayload({
+      user: currentUser,
+      org: me?.org ?? null,
+      subscription: me?.subscription ?? null,
+    });
+  }, [isSubscriptionExpired, me, currentUser]);
+
+  // Hourly subscription check: if expired, clear session and set payload so AuthGate redirects to Subscription Expired
+  useEffect(() => {
+    if (!isApiMode() || !token || !currentUser) return;
+    const interval = setInterval(() => {
+      apiMe(token).then((meRes) => {
+        if (!meRes.ok && meRes.code === "subscription_expired" && (meRes.user || meRes.subscription)) {
+          writeStoredAuth(null);
+          setToken(null);
+          setCurrentUser(null);
+          setMe(null);
+          setSubscriptionExpiredPayload({
+            user: meRes.user ?? null,
+            org: meRes.org ?? null,
+            subscription: meRes.subscription ?? null,
+          });
+        }
+      });
+    }, 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [token, currentUser]);
+
   // When me is not loaded yet (e.g. token just set before apiMe returns), use empty list so we don't call plan-restricted APIs (avoids 403).
   // Once me is set, use server allowedModules or derive from plan.
   const allowedModules =
@@ -262,6 +306,7 @@ export function AuthProvider({ children }) {
       isApiMode: isApiMode(),
       subscriptionExpiredPayload,
       clearSubscriptionExpiredPayload,
+      isSubscriptionExpired,
     }),
     [
       currentUser,
@@ -286,6 +331,7 @@ export function AuthProvider({ children }) {
       getLimit,
       subscriptionExpiredPayload,
       clearSubscriptionExpiredPayload,
+      isSubscriptionExpired,
     ]
   );
 

@@ -12,12 +12,12 @@ max_rows = 1000
 [db]
 port = 54322
 shadow_port = 54320
-health_timeout = "2m"
 major_version = 15
-
-[db.migrations]
-enabled = true
-schema_paths = []
+# health_timeout, db.migrations: require newer Supabase CLI; uncomment if your CLI supports them
+# health_timeout = "2m"
+# [db.migrations]
+# enabled = true
+# schema_paths = []
 
 [db.seed]
 enabled = true

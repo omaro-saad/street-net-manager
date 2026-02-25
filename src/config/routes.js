@@ -3,6 +3,7 @@
  */
 export const ROUTES = {
   HOME: "/",
+  LOGIN: "/login",
   SUBSCRIPTION_EXPIRED: "/subscription-expired",
   SUBSCRIBERS: "/subscribers",
   DISTRIBUTORS: "/distributors",

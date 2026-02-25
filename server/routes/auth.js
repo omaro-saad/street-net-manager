@@ -6,7 +6,9 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { config } from "../config.js";
 import { accounts } from "../db/accounts-loader.js";
+import { getTipsSeen, markTipsSeen } from "../db/tips-loader.js";
 import { requireAuth, requirePlan } from "../middleware/auth.js";
+import { isSubscriptionExpired } from "../lib/subscription.js";
 import { loginLimiter } from "../middleware/rateLimit.js";
 import { getUsage } from "../db/usage.js";
 import { getEnabledModulesForPlan } from "../config/plans.js";
@@ -37,10 +39,7 @@ router.post("/login", loginLimiter, express.json(), async (req, res) => {
   if (!org || !subscription) {
     return res.status(403).json({ ok: false, error: "لا يوجد اشتراك لهذا الحساب." });
   }
-  const now = Date.now();
-  const endsAtMs = subscription.endsAt ? new Date(subscription.endsAt).getTime() : null;
-  const isExpired = subscription.status !== "active" || (endsAtMs != null && endsAtMs <= now);
-  if (isExpired) {
+  if (isSubscriptionExpired(subscription)) {
     return res.status(403).json({
       ok: false,
       code: "subscription_expired",
@@ -117,7 +116,7 @@ router.get("/me", requireAuth, requirePlan, async (req, res) => {
 });
 
 // ——— Update username (authenticated; requires secret code like password change) ———
-router.patch("/profile/username", express.json(), requireAuth, async (req, res) => {
+router.patch("/profile/username", express.json(), requireAuth, requirePlan, async (req, res) => {
   const newUsername = String(req.body?.newUsername ?? "").trim();
   const secretCode = String(req.body?.secretCode ?? "").trim();
   if (!newUsername) {
@@ -235,6 +234,29 @@ router.patch("/ousers/:id/permissions", express.json(), requireAuth, requirePlan
     return res.status(400).json({ ok: false, error: result.error });
   }
   return res.json({ ok: true, permissions: filtered });
+});
+
+// ——— Tips (onboarding): show once per user per page; persisted per account (any device). ———
+router.get("/tips", requireAuth, requirePlan, async (req, res) => {
+  try {
+    const seen = await getTipsSeen(req.user.id);
+    return res.json({ ok: true, tips: seen });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+router.post("/tips/seen", express.json(), requireAuth, requirePlan, async (req, res) => {
+  const pageKey = String(req.body?.pageKey ?? "").trim();
+  if (!pageKey) {
+    return res.status(400).json({ ok: false, error: "pageKey مطلوب." });
+  }
+  try {
+    await markTipsSeen(req.user.id, pageKey);
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
 export default router;

@@ -7,6 +7,9 @@ import "./index.css";
 import { DataProvider } from "./DataContext.jsx";
 import { AuthProvider } from "./contexts/AuthContext.jsx";
 import { AlertProvider } from "./contexts/AlertContext.jsx";
+import { trackVisit } from "./lib/api.js";
+
+trackVisit();
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
