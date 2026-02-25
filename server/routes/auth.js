@@ -237,12 +237,14 @@ router.patch("/ousers/:id/permissions", express.json(), requireAuth, requirePlan
 });
 
 // ——— Tips (onboarding): show once per user per page; persisted per account (any device). ———
+// If user_tips table is missing (migration not run), degrade gracefully: return empty tips so app does not 500.
 router.get("/tips", requireAuth, requirePlan, async (req, res) => {
   try {
     const seen = await getTipsSeen(req.user.id);
     return res.json({ ok: true, tips: seen });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    console.warn("[auth/tips] getTipsSeen failed (e.g. user_tips table missing):", e?.message);
+    return res.json({ ok: true, tips: {} });
   }
 });
 
@@ -255,7 +257,8 @@ router.post("/tips/seen", express.json(), requireAuth, requirePlan, async (req, 
     await markTipsSeen(req.user.id, pageKey);
     return res.json({ ok: true });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    console.warn("[auth/tips] markTipsSeen failed (e.g. user_tips table missing):", e?.message);
+    return res.json({ ok: true });
   }
 });
 

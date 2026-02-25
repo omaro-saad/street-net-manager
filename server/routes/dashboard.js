@@ -1,6 +1,7 @@
 /**
  * Dashboard API: platform-wide stats and user list.
- * Protected by DASHBOARD_SECRET (header X-Dashboard-Secret or Authorization: Bearer <secret>).
+ * Site API spec: every request must include X-Dashboard-Secret (or Authorization: Bearer <secret>).
+ * DASHBOARD_SECRET must match dashboard env VITE_DASHBOARD_SECRET.
  */
 import express from "express";
 import { getDashboardStats, getDashboardUsers } from "../db/dashboard-db.js";
@@ -28,23 +29,39 @@ function requireDashboardSecret(req, res, next) {
 
 router.use(requireDashboardSecret);
 
+/** GET /api/dashboard/stats — spec: totalVisits, totalAccounts, activeSubscriptions, expiredSubscriptions, cancelledSubscriptions, totalOrganizations, planDistribution */
 router.get("/stats", async (req, res) => {
   try {
-    const stats = await getDashboardStats();
+    const [stats, totalVisits] = await Promise.all([
+      getDashboardStats(),
+      getTotalVisitsAsync(),
+    ]);
     if (stats === null) {
       return res.status(503).json({
         ok: false,
         error: "Database not configured (Supabase).",
       });
     }
-    stats.totalVisits = await getTotalVisitsAsync();
-    return res.json({ ok: true, stats });
+    const response = {
+      ok: true,
+      stats: {
+        totalVisits: typeof totalVisits === "number" ? totalVisits : 0,
+        totalAccounts: stats.totalAccounts,
+        activeSubscriptions: stats.activeSubscriptions,
+        expiredSubscriptions: stats.expiredSubscriptions,
+        cancelledSubscriptions: stats.cancelledSubscriptions ?? 0,
+        totalOrganizations: stats.totalOrganizations,
+        planDistribution: stats.planDistribution,
+      },
+    };
+    return res.json(response);
   } catch (e) {
     console.error("[dashboard/stats]", e);
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
+/** GET /api/dashboard/users — spec: id, username, displayName, role, plan, status, orgName, createdAt, updatedAt, endsAt, daysLeft */
 router.get("/users", async (req, res) => {
   try {
     const users = await getDashboardUsers();

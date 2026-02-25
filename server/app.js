@@ -56,8 +56,13 @@ app.get("/", (req, res) =>
 );
 app.get("/health", (req, res) => res.json({ ok: true, service: "street-net-manager-api" }));
 
-// Public: count a visit (called by the main app on load, once per session)
+// Public: count a visit (called by the main app on load, once per session). Do not count dashboard health checks as visits.
 app.get("/api/track-visit", (req, res) => {
+  incrementVisits();
+  res.status(204).end();
+});
+// Alias for Site API spec: GET /api/visit
+app.get("/api/visit", (req, res) => {
   incrementVisits();
   res.status(204).end();
 });

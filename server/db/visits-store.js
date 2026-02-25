@@ -47,30 +47,16 @@ export async function getTotalVisitsAsync() {
   return val;
 }
 
-export async function incrementVisitsAsync() {
-  const supabase = getSupabase();
-  if (!supabase) {
-    _memoryCount += 1;
-    return _memoryCount;
-  }
-  try {
-    const { data, error } = await supabase.rpc("increment_total_visits");
-    if (!error && typeof data === "number") {
-      _memoryCount = data;
-      return data;
-    }
-  } catch (_) {}
-  _memoryCount += 1;
-  return _memoryCount;
-}
-
-/** Called by GET /api/track-visit. When Supabase is used, only DB is incremented (no local double-count). */
 export function incrementVisits() {
   const supabase = getSupabase();
   if (!supabase) {
     _memoryCount += 1;
     return _memoryCount;
   }
-  incrementVisitsAsync().catch(() => {}); // fire-and-forget; dashboard reads from DB via getTotalVisitsAsync
-  return 0;
+  // RPC is async; we can't await in a sync handler. So we fire-and-forget the RPC and update local cache when it resolves.
+  supabase.rpc("increment_total_visits").then(({ data }) => {
+    if (typeof data === "number") _memoryCount = data;
+  }).catch(() => {});
+  _memoryCount += 1; // optimistic local update so getTotalVisits() is roughly correct before RPC returns
+  return _memoryCount;
 }

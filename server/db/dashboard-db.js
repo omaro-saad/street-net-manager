@@ -26,6 +26,9 @@ function daysLeft(endsAt) {
 
 /**
  * Platform-wide stats for the dashboard overview.
+ * Matches Site API spec: totalAccounts, activeSubscriptions, expiredSubscriptions,
+ * cancelledSubscriptions, totalOrganizations, planDistribution.
+ * totalVisits is added by the route from visits-store.
  * Returns null if Supabase is not configured.
  */
 export async function getDashboardStats() {
@@ -35,24 +38,29 @@ export async function getDashboardStats() {
   const [orgsRes, accountsRes, subsRes] = await Promise.all([
     supabase.from("organizations").select("id", { count: "exact", head: true }),
     supabase.from("accounts").select("id", { count: "exact", head: true }),
-    supabase.from("subscriptions").select("plan, status"),
+    supabase.from("subscriptions").select("plan, status, ends_at"),
   ]);
 
   const totalOrganizations = orgsRes?.count ?? 0;
   const totalAccounts = accountsRes?.count ?? 0;
   const subscriptionRows = subsRes?.data ?? [];
+  const now = new Date();
 
-  const activeSubscriptions = subscriptionRows.filter((s) => s.status === "active").length;
-  const expiredSubscriptions = subscriptionRows.filter((s) => s.status === "expired").length;
+  let activeSubscriptions = 0;
+  let expiredSubscriptions = 0;
   const cancelledSubscriptions = subscriptionRows.filter((s) => s.status === "cancelled").length;
-  const pendingSubscriptions = subscriptionRows.filter((s) => s.status === "pending").length;
-
   const planDistribution = { basic: 0, plus: 0, pro: 0 };
-  subscriptionRows.forEach((s) => {
-    if (s.status === "active" && planDistribution[s.plan] !== undefined) {
-      planDistribution[s.plan]++;
+
+  for (const s of subscriptionRows) {
+    const endsAt = s.ends_at ? new Date(s.ends_at) : null;
+    const isExpiredByTime = endsAt && endsAt.getTime() <= now.getTime();
+    if (s.status === "active" && !isExpiredByTime) {
+      activeSubscriptions++;
+      if (planDistribution[s.plan] !== undefined) planDistribution[s.plan]++;
+    } else if (s.status === "expired" || (s.status === "active" && isExpiredByTime)) {
+      expiredSubscriptions++;
     }
-  });
+  }
 
   return {
     totalOrganizations,
@@ -60,19 +68,14 @@ export async function getDashboardStats() {
     activeSubscriptions,
     expiredSubscriptions,
     cancelledSubscriptions,
-    pendingSubscriptions,
     planDistribution,
-    subscriptionStatus: {
-      active: activeSubscriptions,
-      expired: expiredSubscriptions,
-      cancelled: cancelledSubscriptions,
-      pending: pendingSubscriptions,
-    },
   };
 }
 
 /**
  * List accounts with org name and subscription for dashboard users table.
+ * Matches Site API spec: id, username, displayName, role, plan, status, orgName,
+ * createdAt, updatedAt, endsAt, daysLeft. Optional placeholders: phone, city, secretCode, loginCount, employees.
  * Returns [] if Supabase is not configured.
  */
 export async function getDashboardUsers() {
@@ -96,21 +99,26 @@ export async function getDashboardUsers() {
     let status = "inactive";
     if (sub) {
       if (sub.status === "active") status = dLeft !== null && dLeft <= 0 ? "expired" : "active";
-      else if (sub.status === "expired") status = "expired";
+      else if (sub.status === "expired" || sub.status === "cancelled") status = "expired";
     }
     return {
       id: a.id,
-      orgId: a.org_id,
       username: a.username,
-      displayName: a.display_name || a.username,
+      displayName: a.display_name || a.username || null,
       role: a.role,
-      orgName: orgMap.get(a.org_id) || "",
-      plan: sub?.plan ?? null,
+      plan: sub?.plan ?? "basic",
       status,
-      endsAt,
-      daysLeft: dLeft,
+      orgName: orgMap.get(a.org_id) || null,
       createdAt: a.created_at,
       updatedAt: a.updated_at,
+      endsAt: endsAt || null,
+      daysLeft: dLeft != null ? dLeft : 0,
+      // Optional (dashboard shows "—" if missing)
+      phone: null,
+      city: null,
+      secretCode: null,
+      loginCount: null,
+      employees: null,
     };
   });
 }
