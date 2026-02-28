@@ -32,6 +32,9 @@ supabase/.temp/
 *.sqlite
 *.sqlite3
 
+# Server runtime data (e.g. in-memory tips persistence)
+server/.data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

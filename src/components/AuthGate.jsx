@@ -1,6 +1,6 @@
 // src/components/AuthGate.jsx
-// If no user (not logged in) → show LoginPage or SubscriptionExpiredPage. If logged in and subscription expired → force Subscription Expired. If logged in and valid → app.
-// Revalidates session on refresh, when opening app, and when tab becomes visible so expired users are always kicked out.
+// Single source for "subscription expired": only when backend returns code "subscription_expired" (login, /me, or any API).
+// subscriptionExpiredPayload is set only in that case; we never treat other 403 as expired. Expired users cannot login or use the app.
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";

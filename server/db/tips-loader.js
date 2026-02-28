@@ -1,5 +1,6 @@
 /**
  * Tips API: uses Supabase when SUPABASE_URL is set, else in-memory.
+ * Both getTipsSeen(publicId, accountId) and markTipsSeen(publicId, pageKey, accountId) support accountId fallback when publicId is null (in-memory only).
  */
 import path from "path";
 import { fileURLToPath } from "url";
@@ -17,5 +18,9 @@ if (useDb) {
   tipsMod = await import("./tips.js");
 }
 
-export const getTipsSeen = tipsMod.getTipsSeen;
-export const markTipsSeen = tipsMod.markTipsSeen;
+export async function getTipsSeen(publicId, accountId) {
+  return tipsMod.getTipsSeen(publicId, accountId);
+}
+export async function markTipsSeen(publicId, pageKey, accountId) {
+  return tipsMod.markTipsSeen(publicId, pageKey, accountId);
+}

@@ -40,7 +40,8 @@ export default function LoginPage() {
         navigate(ROUTES.HOME, { replace: true });
         return;
       }
-      if (res?.status === 403 || res?.code === "subscription_expired" || res?.subscriptionExpired) {
+      // Only show Subscription Expired when backend explicitly returned that code. Other 403 = show error in form.
+      if (res?.code === "subscription_expired") {
         const payload = res?.subscriptionExpired ?? {
           user: res?.user ?? null,
           org: res?.org ?? null,

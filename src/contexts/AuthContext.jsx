@@ -61,9 +61,8 @@ export function AuthProvider({ children }) {
           setToken(null);
           setCurrentUser(null);
           setMe(null);
-          // Any 403 from /me is subscription-related (no org/sub or expired); show Subscription Expired page
-          const isExpired = meRes.code === "subscription_expired" || meRes.status === 403;
-          if (isExpired) {
+          // Only show Subscription Expired when backend explicitly says so (code "subscription_expired"). Other 403 = invalid token / no org — just clear session.
+          if (meRes.code === "subscription_expired") {
             setSubscriptionExpiredPayload({
               user: meRes.user ?? null,
               org: meRes.org ?? null,
@@ -136,11 +135,8 @@ export function AuthProvider({ children }) {
 
     const res = await apiLogin(u, p);
     if (!res.ok) {
-      const isExpired =
-        res.code === "subscription_expired" ||
-        res.status === 403 ||
-        (res.user != null || res.subscription != null);
-      if (isExpired) {
+      // Only treat as subscription expired when backend explicitly returns that code. Other 403 = e.g. no subscription for account.
+      if (res.code === "subscription_expired") {
         const payload = {
           user: res.user ?? null,
           org: res.org ?? null,
@@ -162,8 +158,8 @@ export function AuthProvider({ children }) {
       setToken(null);
       setCurrentUser(null);
       writeStoredAuth(null);
-      const isExpiredMe = meRes.code === "subscription_expired" || meRes.status === 403;
-      if (isExpiredMe) {
+      // Only show Subscription Expired when /me explicitly returns code "subscription_expired". Other failures = don't set payload.
+      if (meRes.code === "subscription_expired") {
         const payload = {
           user: meRes.user ?? null,
           org: meRes.org ?? null,
@@ -251,12 +247,11 @@ export function AuthProvider({ children }) {
     });
   }, [isSubscriptionExpired, me, currentUser]);
 
-  // Revalidate session: call /me and if 403 clear auth and set subscription-expired payload. Used on visibility and before showing app.
+  // Revalidate session: call /me; only treat as expired when backend returns code "subscription_expired".
   const revalidateSession = useCallback(() => {
     if (!isApiMode() || !token) return Promise.resolve({ ok: true });
     return apiMe(token).then((meRes) => {
-      const isExpired = !meRes.ok && (meRes.code === "subscription_expired" || meRes.status === 403);
-      if (isExpired) {
+      if (!meRes.ok && meRes.code === "subscription_expired") {
         writeStoredAuth(null);
         setToken(null);
         setCurrentUser(null);
@@ -268,7 +263,13 @@ export function AuthProvider({ children }) {
         });
         return { ok: false };
       }
-      return { ok: true };
+      if (!meRes.ok) {
+        writeStoredAuth(null);
+        setToken(null);
+        setCurrentUser(null);
+        setMe(null);
+      }
+      return { ok: meRes.ok };
     });
   }, [token]);
 

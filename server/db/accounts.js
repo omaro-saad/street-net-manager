@@ -68,12 +68,17 @@ export function getOrgById(orgId) {
 
 export function findUserByUsername(username) {
   const u = String(username ?? "").trim().toLowerCase();
-  return users.get(u) ?? null;
+  const user = users.get(u) ?? null;
+  if (user && user.publicId == null) user.publicId = generateUniquePublicIdInMemory();
+  return user;
 }
 
 export function findUserById(userId) {
   for (const u of users.values()) {
-    if (u.id === userId) return u;
+    if (u.id === userId) {
+      if (u.publicId == null) u.publicId = generateUniquePublicIdInMemory();
+      return u;
+    }
   }
   return null;
 }

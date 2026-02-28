@@ -240,20 +240,20 @@ router.patch("/ousers/:id/permissions", express.json(), requireAuth, requirePlan
   return res.json({ ok: true, permissions: filtered });
 });
 
-// ——— Tips (onboarding): linked to first login. Show only until user dismisses tips once; then never again. ———
+// ——— Tips: per-page, keyed by public_id. Show tips for a page iff that page_key is not yet seen for this user. Once seen, never show again for that page.
 // If user_tips table is missing (migration not run), degrade gracefully: return empty tips so app does not 500.
 router.get("/tips", requireAuth, requirePlan, async (req, res) => {
   try {
-    const seen = await getTipsSeen(req.user.publicId ?? null);
+    const seen = await getTipsSeen(req.user.publicId ?? null, req.user.id);
     const onboardingDone = !!seen.onboarding_done;
     return res.json({ ok: true, tips: seen, onboardingDone, userPublicId: req.user.publicId ?? null });
   } catch (e) {
     console.warn("[auth/tips] getTipsSeen failed (e.g. user_tips table missing):", e?.message);
-    return res.json({ ok: true, tips: {}, onboardingDone: true });
+    return res.json({ ok: true, tips: {}, onboardingDone: false });
   }
 });
 
-// Mark tip as seen for a page; also set onboarding_done. Keyed by public_id.
+// Mark tip as seen for this page only (keyed by public_id, or account id when public_id null). Once seen, never show again for that page.
 router.post("/tips/seen", express.json(), requireAuth, requirePlan, async (req, res) => {
   const pageKey = String(req.body?.pageKey ?? "").trim();
   if (!pageKey) {
@@ -261,7 +261,6 @@ router.post("/tips/seen", express.json(), requireAuth, requirePlan, async (req, 
   }
   try {
     await markTipsSeen(req.user.publicId ?? null, pageKey, req.user.id);
-    await markTipsSeen(req.user.publicId ?? null, "onboarding_done", req.user.id);
     return res.json({ ok: true });
   } catch (e) {
     console.warn("[auth/tips] markTipsSeen failed (e.g. user_tips table missing):", e?.message);

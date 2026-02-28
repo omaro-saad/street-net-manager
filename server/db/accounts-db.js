@@ -59,6 +59,18 @@ export async function findUserById(userId) {
   return rowToUser(data);
 }
 
+/** Get public_id for an account (for tips fallback when JWT user has no publicId). */
+export async function getPublicIdByAccountId(accountId) {
+  if (!accountId) return null;
+  const { data, error } = await getSupabase()
+    .from("accounts")
+    .select("public_id")
+    .eq("id", accountId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data.public_id ?? null;
+}
+
 export async function verifyPassword(user, password) {
   if (!user?.passwordHash) return false;
   return bcrypt.compare(String(password ?? ""), user.passwordHash);
