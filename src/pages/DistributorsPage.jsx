@@ -31,6 +31,9 @@ import {
 } from "../utils/helpers.js";
 import { normalizeLineRow } from "../utils/lineShape.js";
 import { useResponsive } from "../hooks/useResponsive.js";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
 import { theme } from "../theme.js";
 import { Field } from "../components/shared/index.js";
 import {
@@ -182,9 +185,12 @@ async function pushAutoInvoiceEverywhere({ gate, setData, autoInv, data, token }
   }
 }
 
+const TIPS_PAGE_KEY = "distributors";
+
 export default function DistributorsPage() {
   const ctx = useData();
   const { token } = useAuth();
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
   const data = ctx?.data;
   const setData = ctx?.setData;
   const gate = ctx?.gate;
@@ -708,6 +714,7 @@ export default function DistributorsPage() {
 
   return (
     <div style={pageWrapR}>
+      <PageTipsModal open={showTips} slides={PAGE_TIPS[TIPS_PAGE_KEY]} onDone={handleTipsDone} onLinkClick={handleTipsLinkClick} />
       <LoadingOverlay visible={actionLoading} />
       {!canWriteDistributors && <ReadOnlyBanner />}
       <div style={topRowR}>

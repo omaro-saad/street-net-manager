@@ -17,6 +17,17 @@ function getSupabase() {
   return _client;
 }
 
+/** Random 9-digit integer in [100000000, 999999999] that does not exist in accounts. Retries up to 10 times. */
+export async function generateUniquePublicId() {
+  const supabase = getSupabase();
+  for (let i = 0; i < 10; i++) {
+    const id = Math.floor(100000000 + Math.random() * 900000000);
+    const { data } = await supabase.from("accounts").select("id").eq("public_id", id).maybeSingle();
+    if (!data) return id;
+  }
+  throw new Error("Could not generate unique public_id");
+}
+
 function rowToUser(row) {
   if (!row) return null;
   return {
@@ -27,6 +38,7 @@ function rowToUser(row) {
     resetCodeHash: row.reset_code_hash,
     role: row.role,
     displayName: row.display_name,
+    publicId: row.public_id ?? null,
   };
 }
 
@@ -75,7 +87,7 @@ export async function getOadminUsernameForOrg(orgId) {
 export async function listOusersByOrgId(orgId) {
   const { data, error } = await getSupabase()
     .from("accounts")
-    .select("id, username, display_name, role")
+    .select("id, username, display_name, role, public_id")
     .eq("org_id", orgId)
     .eq("role", "ouser")
     .order("username");
@@ -85,6 +97,7 @@ export async function listOusersByOrgId(orgId) {
     username: r.username,
     displayName: r.display_name,
     role: r.role,
+    publicId: r.public_id ?? null,
   }));
 }
 
@@ -222,6 +235,7 @@ export async function createUser(username, plainPassword, { orgId, role = "ouser
   if (!orgId) return { ok: false, error: "المؤسسة مطلوبة." };
   const { data: conflict } = await getSupabase().from("accounts").select("id").ilike("username", u).maybeSingle();
   if (conflict) return { ok: false, error: "اسم المستخدم مستخدم بالفعل." };
+  const publicId = await generateUniquePublicId();
   const resetCode = String(Math.floor(100000 + Math.random() * 900000));
   const passwordHash = await bcrypt.hash(p, 10);
   const resetCodeHash = await bcrypt.hash(resetCode, 10);
@@ -234,8 +248,9 @@ export async function createUser(username, plainPassword, { orgId, role = "ouser
       reset_code_hash: resetCodeHash,
       role: role || "ouser",
       display_name: displayName || u,
+      public_id: publicId,
     })
-    .select("id, username, org_id, role, display_name")
+    .select("id, username, org_id, role, display_name, public_id")
     .single();
   if (error) return { ok: false, error: error.message };
   return {
@@ -246,6 +261,7 @@ export async function createUser(username, plainPassword, { orgId, role = "ouser
       orgId: inserted.org_id,
       role: inserted.role,
       displayName: inserted.display_name,
+      publicId: inserted.public_id ?? publicId,
     },
     resetCode,
   };

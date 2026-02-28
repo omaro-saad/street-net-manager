@@ -49,7 +49,7 @@ export default function LoginPage() {
         try {
           sessionStorage.setItem("subscription_expired_shown", "1");
         } catch {}
-        navigate(ROUTES.SUBSCRIPTION_EXPIRED, { state: { subscriptionExpired: payload }, replace: true });
+        navigate(ROUTES.SUBSCRIPTION_EXPIRED, { state: { subscriptionExpired: payload, fromLogin: true }, replace: true });
         return;
       }
       setError(res?.error || "حدث خطأ.");

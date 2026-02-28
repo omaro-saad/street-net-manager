@@ -37,6 +37,11 @@ import {
   SUPPORT_MAILTO,
 } from "../lib/api.js";
 import { MODULE_KEYS } from "../lib/plans.js";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
+import { PLAN_LABELS, DURATION_LABELS } from "../constants/plans.js";
+import { getTimeRemainingDays } from "../utils/helpers.js";
 import { theme } from "../theme.js";
 import {
   pageWrap,
@@ -64,29 +69,6 @@ const MODULE_LABELS = {
   finance: "المالية",
   settings: "الإعدادات",
 };
-
-function formatTimeRemaining(endsAt) {
-  if (!endsAt) return null;
-  const end = new Date(endsAt);
-  const now = new Date();
-  if (end <= now) return "منتهي";
-  const ms = end - now;
-  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
-  if (days >= 365) {
-    const y = Math.floor(days / 365);
-    const d = days % 365;
-    return d ? `${y} سنة و ${d} يوم` : `${y} سنة`;
-  }
-  if (days >= 30) {
-    const m = Math.floor(days / 30);
-    const d = days % 30;
-    return d ? `${m} شهر و ${d} يوم` : `${m} شهر`;
-  }
-  return `${days} يوم`;
-}
-
-const PLAN_LABELS = { basic: "أساسي", plus: "بلس", pro: "برو" };
-const DURATION_LABELS = { monthly: "شهري", "3months": "٣ أشهر", yearly: "سنوي" };
 
 const iconSize = 22;
 const iconColor = "currentColor";
@@ -200,11 +182,14 @@ const ICON_INFO = (
   </svg>
 );
 
+const TIPS_PAGE_KEY = "settings";
+
 export default function SettingsPage() {
   const navigate = useNavigate();
   const { data, setData } = useData();
   const [tab, setTab] = useState("profile");
   const { user, token, updateUser, logout, role, subscription, oadminUsername, allowedModules: authAllowedModules } = useAuth();
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
   const { showValidationAlert, showErrorAlert, showSuccessAlert } = useAlert();
   const { execute, isLoading: actionLoading } = useAsyncAction({ minLoadingMs: 1000 });
 
@@ -508,6 +493,7 @@ export default function SettingsPage() {
 
   return (
     <div style={{ ...pageWrap, flex: 1, minHeight: 0, boxSizing: "border-box", overflowX: "hidden", ...r.pageWrap }}>
+      <PageTipsModal open={showTips} slides={PAGE_TIPS[TIPS_PAGE_KEY]} onDone={handleTipsDone} onLinkClick={handleTipsLinkClick} />
       <LoadingOverlay visible={actionLoading} />
       <div style={{ ...headerCard, ...r.headerCard }}>
         <h1 style={{ ...pageTitle, ...r.pageTitle }}>الإعدادات</h1>
@@ -563,7 +549,7 @@ export default function SettingsPage() {
               <div style={profileCardIconWrap}>{ICON_CLOCK}</div>
               <div style={profileCardLabel}>المتبقي</div>
               <div style={{ ...profileCardValue, ...r.profileCardValue, color: theme.primary }}>
-                {isApiMode() && subscription ? (formatTimeRemaining(subscription.endsAt) ?? "—") : "—"}
+                {isApiMode() && subscription ? (getTimeRemainingDays(subscription.endsAt) ?? "—") : "—"}
               </div>
               <div style={profileCardMeta}>من انتهاء الاشتراك</div>
             </div>

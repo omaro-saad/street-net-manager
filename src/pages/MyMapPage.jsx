@@ -14,6 +14,9 @@ import { PLAN_LIMIT_MESSAGE, READ_ONLY_MESSAGE, isApiMode, apiMapsGet, apiMapsSe
 import { MentionsInput, Mention } from "react-mentions";
 import { safeArray, nowMs, genId, normId } from "../utils/helpers.js";
 import { useResponsive } from "../hooks/useResponsive.js";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
 import { theme } from "../theme.js";
 import {
   pageWrap,
@@ -289,7 +292,7 @@ function makeSimpleMentionsStyle(baseBoxStyle, { multiline } = { multiline: true
       fontSize,
       lineHeight,
       fontFamily,
-      color: "#111827",
+      color: theme.text,
       background: "transparent",
       border: "none",
       outline: "none",
@@ -347,14 +350,21 @@ function defaultMapState(lineId) {
   };
 }
 
+// Stable refs for React Flow (avoids error #002: define nodeTypes/edgeTypes outside component)
+const REACTFLOW_NODE_TYPES = {};
+const REACTFLOW_EDGE_TYPES = {};
+
 /* =========================
    ✅ MyMapPage (NO DB)
    ========================= */
+const TIPS_PAGE_KEY = "map";
+
 export default function MyMapPage() {
   const ctx = useData();
   const gate = ctx?.gate;
   const data = ctx?.data;
   const { getLimit, canWrite, token } = useAuth();
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
   const useMapsApi = isApiMode() && !!token;
   const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showSuccessAlert, showConfirmAlert } = useAlert();
   const canWriteMap = canWrite("map");
@@ -417,10 +427,8 @@ export default function MyMapPage() {
   }, [lines, selectedLineId]);
 
   // =========================
-  // ✅ React Flow state (stable nodeTypes/edgeTypes to avoid React Flow #002)
+  // ✅ React Flow state
   // =========================
-  const nodeTypes = useMemo(() => ({}), []);
-  const edgeTypes = useMemo(() => ({}), []);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [rfInstance, setRfInstance] = useState(null);
@@ -901,6 +909,7 @@ export default function MyMapPage() {
 
   return (
     <div style={pageWrapMap}>
+      <PageTipsModal open={showTips} slides={PAGE_TIPS[TIPS_PAGE_KEY]} onDone={handleTipsDone} onLinkClick={handleTipsLinkClick} />
       <LoadingOverlay visible={actionLoading} />
       {!canWriteMap && <ReadOnlyBanner />}
       {/* Header */}
@@ -1021,8 +1030,8 @@ export default function MyMapPage() {
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
+                nodeTypes={REACTFLOW_NODE_TYPES}
+                edgeTypes={REACTFLOW_EDGE_TYPES}
                 onInit={setRfInstance}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}

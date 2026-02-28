@@ -1,14 +1,15 @@
 /**
- * User tips (onboarding) — in-memory. Tracks which pages' tips the user has seen (once per user).
+ * User tips (onboarding) — in-memory. Keyed by public_id (9-digit).
  */
-const tipsSeen = new Map(); // accountId -> Set<pageKey>
+const tipsSeen = new Map(); // publicId -> Set<pageKey>
 
 /**
- * @param {string} accountId
+ * @param {number} publicId - accounts.public_id
  * @returns {Promise<Record<string, boolean>>}
  */
-export async function getTipsSeen(accountId) {
-  const set = tipsSeen.get(accountId);
+export async function getTipsSeen(publicId) {
+  if (publicId == null) return {};
+  const set = tipsSeen.get(publicId);
   if (!set) return {};
   const out = {};
   for (const k of set) out[k] = true;
@@ -16,16 +17,17 @@ export async function getTipsSeen(accountId) {
 }
 
 /**
- * @param {string} accountId
+ * @param {number} publicId - accounts.public_id
  * @param {string} pageKey
  */
-export async function markTipsSeen(accountId, pageKey) {
+export async function markTipsSeen(publicId, pageKey) {
+  if (publicId == null) return;
   const key = String(pageKey ?? "").trim();
   if (!key) throw new Error("page_key مطلوب.");
-  let set = tipsSeen.get(accountId);
+  let set = tipsSeen.get(publicId);
   if (!set) {
     set = new Set();
-    tipsSeen.set(accountId, set);
+    tipsSeen.set(publicId, set);
   }
   set.add(key);
 }

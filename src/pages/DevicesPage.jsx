@@ -11,6 +11,9 @@ import ReadOnlyBanner from "../components/ReadOnlyBanner.jsx";
 import { READ_ONLY_MESSAGE, isApiMode, apiInventoryGet, apiInventorySet } from "../lib/api.js";
 import { safeArray, safeObj, nowMs } from "../utils/helpers.js";
 import { useResponsive } from "../hooks/useResponsive.js";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
 import { theme } from "../theme.js";
 import {
   pageWrap,
@@ -49,9 +52,12 @@ function money(n) {
   if (!Number.isFinite(v)) return "—";
   return `${v.toFixed(2)} ₪`;
 }
+const TIPS_PAGE_KEY = "devices";
+
 export default function DevicesPage() {
   const { data, setData } = useData();
   const { token, getLimit, canWrite } = useAuth();
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
   const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showConfirmAlert } = useAlert();
 
   const useInventoryApi = isApiMode() && !!token;
@@ -775,6 +781,7 @@ export default function DevicesPage() {
 
   return (
     <div style={pageWrapR}>
+      <PageTipsModal open={showTips} slides={PAGE_TIPS[TIPS_PAGE_KEY]} onDone={handleTipsDone} onLinkClick={handleTipsLinkClick} />
       <LoadingOverlay visible={actionLoading} />
       {!canWriteDevices && <ReadOnlyBanner />}
       {/* Header */}

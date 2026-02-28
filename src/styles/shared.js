@@ -18,10 +18,10 @@ export const input = {
   borderRadius: theme.borderRadiusSm,
   fontSize: 14,
   direction: "rtl",
-  backgroundColor: theme.surface,
+  backgroundColor: theme.surfaceAlt,
   outline: "none",
   boxSizing: "border-box",
-  color: "white",
+  color: theme.text,
 };
 
 export const btnPrimary = {

@@ -19,6 +19,9 @@ import { useAsyncAction } from "../hooks/useAsyncAction.js";
 import LoadingOverlay from "../components/LoadingOverlay.jsx";
 import { safeArray, safeObj, nowMs, genId, normId } from "../utils/helpers.js";
 import { useResponsive } from "../hooks/useResponsive.js";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
 import { theme } from "../theme.js";
 import { Field } from "../components/shared/index.js";
 import {
@@ -64,10 +67,13 @@ function cleanText(x) {
   return s ? s : "";
 }
 
+const TIPS_PAGE_KEY = "lines";
+
 export default function LinesPage() {
   const ctx = useData();
   const { data, setData } = ctx || {};
   const { getLimit, canWrite, token } = useAuth();
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
   const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showConfirmAlert } = useAlert();
   const canWriteLines = canWrite("lines");
   const { isNarrow, isMobile } = useResponsive();
@@ -507,6 +513,7 @@ export default function LinesPage() {
 
   return (
     <div style={pageWrapR}>
+      <PageTipsModal open={showTips} slides={PAGE_TIPS[TIPS_PAGE_KEY]} onDone={handleTipsDone} onLinkClick={handleTipsLinkClick} />
       <LoadingOverlay visible={actionLoading} />
       {!canWriteLines && <ReadOnlyBanner />}
       <div style={topRowR}>

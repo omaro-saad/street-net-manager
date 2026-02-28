@@ -32,6 +32,7 @@ export async function requireAuth(req, res, next) {
       role: user.role,
       displayName: user.displayName,
       addonEmployeePermissions: user.addonEmployeePermissions,
+      publicId: user.publicId ?? null,
     };
     req.orgId = user.orgId;
     req.role = user.role;
@@ -49,7 +50,14 @@ export async function requirePlan(req, res, next) {
   const org = await accounts.getOrgById(req.orgId);
   const sub = await (accounts.getSubscriptionAnyStatus?.(req.orgId) ?? accounts.getSubscription(req.orgId));
   if (!org || !sub) {
-    return res.status(403).json({ ok: false, error: "لا يوجد اشتراك." });
+    return res.status(403).json({
+      ok: false,
+      code: "subscription_expired",
+      error: "لا يوجد اشتراك.",
+      user: req.user,
+      org: org ? { id: org.id, name: org.name, slug: org.slug } : null,
+      subscription: null,
+    });
   }
   if (isSubscriptionExpired(sub)) {
     return res.status(403).json({

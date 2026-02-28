@@ -10,6 +10,9 @@ import { useAsyncAction } from "../hooks/useAsyncAction.js";
 import LoadingOverlay from "../components/LoadingOverlay.jsx";
 import { READ_ONLY_MESSAGE, isApiMode, apiFinanceGet, apiFinancePut } from "../lib/api.js";
 import { safeArray, safeObj, nowMs, genId, fmtMoney } from "../utils/helpers.js";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
 import { theme } from "../theme.js";
 import {
   pageWrap,
@@ -70,9 +73,12 @@ const PAY_METHODS = ["كاش", "تحويل", "آجل", "أخرى"];
 /* =========================
    In-memory FinancePage (NO DB)
    ========================= */
+const TIPS_PAGE_KEY = "finance";
+
 export default function FinancePage() {
   const { data, setData, gate } = useData();
   const { token } = useAuth();
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
 
   const useFinanceApi = isApiMode() && !!token;
 
@@ -514,6 +520,7 @@ export default function FinancePage() {
 
   return (
     <div style={pageWrap}>
+      <PageTipsModal open={showTips} slides={PAGE_TIPS[TIPS_PAGE_KEY]} onDone={handleTipsDone} onLinkClick={handleTipsLinkClick} />
       <LoadingOverlay visible={actionLoading} />
       {!canWriteFinance && <ReadOnlyBanner />}
       <div style={topRow}>

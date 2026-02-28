@@ -4,33 +4,14 @@ import { useAuth } from "../contexts/AuthContext.jsx";
 import { ROUTES } from "../config/routes.js";
 import { SUPPORT_MAILTO } from "../lib/api.js";
 import { theme } from "../theme.js";
-
-const PLAN_LABELS = { basic: "أساسي", plus: "بلس", pro: "برو" };
-
-function formatTimeRemaining(endsAt) {
-  if (!endsAt) return null;
-  const end = new Date(endsAt);
-  const now = new Date();
-  if (end <= now) return "منتهي";
-  const ms = end - now;
-  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
-  if (days >= 365) {
-    const y = Math.floor(days / 365);
-    const d = days % 365;
-    return d ? `${y} سنة و ${d} يوم` : `${y} سنة`;
-  }
-  if (days >= 30) {
-    const m = Math.floor(days / 30);
-    const d = days % 30;
-    return d ? `${m} شهر و ${d} يوم` : `${m} شهر`;
-  }
-  return `${days} يوم`;
-}
+import { PLAN_LABELS } from "../constants/plans.js";
+import { getTimeRemainingDays } from "../utils/helpers.js";
 
 export default function PlanRestrictedPage({ moduleLabel }) {
   const { user, role, subscription, plan } = useAuth();
   const planName = PLAN_LABELS[subscription?.plan || plan] || subscription?.plan || plan || "—";
-  const timeRemaining = formatTimeRemaining(subscription?.endsAt) ?? "—";
+  const timeRemainingDays = getTimeRemainingDays(subscription?.endsAt);
+  const timeRemainingDisplay = timeRemainingDays != null ? timeRemainingDays : "—";
 
   const profileGrid = {
     display: "grid",
@@ -85,7 +66,7 @@ export default function PlanRestrictedPage({ moduleLabel }) {
           </div>
           <div style={profileCard}>
             <div style={profileCardLabel}>المتبقي</div>
-            <div style={{ ...profileCardValue, color: theme.primary }}>{timeRemaining}</div>
+            <div style={{ ...profileCardValue, color: theme.primary }}>{timeRemainingDisplay}</div>
           </div>
         </div>
 

@@ -18,6 +18,9 @@ import {
 import { getCachedPackages, setCachedPackages, invalidatePackages } from "../lib/apiCache.js";
 import LoadingLogo from "../components/LoadingLogo.jsx";
 import { safeArray, safeObj, nowMs, genId, fmtMoney } from "../utils/helpers.js";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
 import { theme } from "../theme.js";
 import {
   pageWrap,
@@ -219,9 +222,12 @@ function normalizePkg(p) {
 /* =========================
    Page
    ========================= */
+const TIPS_PAGE_KEY = "packages";
+
 export default function PackagesPage() {
   const { gate, setData } = useData();
   const { token } = useAuth();
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
   const usePackagesApi = isApiMode() && !!token;
 
   const [pageTab, setPageTab] = useState("subscriber");
@@ -747,6 +753,7 @@ export default function PackagesPage() {
 
   return (
     <div style={pageWrap}>
+      <PageTipsModal open={showTips} slides={PAGE_TIPS[TIPS_PAGE_KEY]} onDone={handleTipsDone} onLinkClick={handleTipsLinkClick} />
       <LoadingOverlay visible={actionLoading} />
       {!canWritePackages && <ReadOnlyBanner />}
       <div style={topRow}>

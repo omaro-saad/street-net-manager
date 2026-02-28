@@ -3,87 +3,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { useData } from "../DataContext";
 import { useNavigate } from "react-router-dom";
-import { isApiMode, apiGetTips, apiMarkTipsSeen } from "../lib/api.js";
+import { isApiMode } from "../lib/api.js";
 import LoadingLogo from "../components/LoadingLogo.jsx";
 import { useMinLoadingTime } from "../hooks/useMinLoadingTime.js";
-import { useAuth } from "../contexts/AuthContext.jsx";
-import HomeTipsModal from "../components/HomeTipsModal.jsx";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
+import { safeArray, safeObj, cleanText, clampWords, asBool, pickFirst, isExpired } from "../utils/helpers.js";
 
-/* =========================
-   Helpers
-========================= */
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function safeObj(x) {
-  return x && typeof x === "object" && !Array.isArray(x) ? x : {};
-}
-function cleanText(x) {
-  const s = String(x ?? "").trim();
-  return s ? s : "";
-}
-function clampWords(s, maxWords = 4) {
-  const t = cleanText(s);
-  if (!t) return "";
-  const parts = t.split(/\s+/g).filter(Boolean);
-  return parts.slice(0, maxWords).join(" ");
-}
-function asBool(x, defaultVal = true) {
-  if (x === 0 || x === "0") return false;
-  if (x === 1 || x === "1") return true;
-  if (typeof x === "boolean") return x;
-  if (x === null || x === undefined) return defaultVal;
-  return Boolean(x);
-}
-function pickFirst(...vals) {
-  for (const v of vals) {
-    if (v !== undefined && v !== null) return v;
-  }
-  return null;
-}
-function isExpired(sub) {
-  const e = pickFirst(sub?.expiresAt, sub?.expires_at, sub?.expiryAt, sub?.expiry_at, sub?.expires);
-  const num = Number(e);
-  if (!Number.isFinite(num) || num <= 0) return false;
-  return num < Date.now();
-}
-
-/* =========================
-   Home
-========================= */
 const TIPS_PAGE_KEY = "home";
 
 export default function HomePage() {
   const { data, gate, initDone } = useData() || {};
   const navigate = useNavigate();
-  const { token, isLoggedIn } = useAuth();
   const displayLoading = useMinLoadingTime(isApiMode() && !initDone);
-
-  // One-time tips: show only when user has never seen home tips (first login, any device).
-  const [tipsChecked, setTipsChecked] = useState(false);
-  const [showTips, setShowTips] = useState(false);
-
-  useEffect(() => {
-    if (!isApiMode() || !token || !isLoggedIn || tipsChecked) return;
-    apiGetTips(token)
-      .then((res) => {
-        setTipsChecked(true);
-        if (res.ok && !res.tips[TIPS_PAGE_KEY]) setShowTips(true);
-      })
-      .catch(() => setTipsChecked(true));
-  }, [token, isLoggedIn, tipsChecked]);
-
-  const handleTipsDone = () => {
-    if (isApiMode() && token) {
-      apiMarkTipsSeen(token, TIPS_PAGE_KEY).catch(() => {});
-    }
-    setShowTips(false);
-  };
-
-  const handleTipsLinkClick = (path) => {
-    handleTipsDone();
-    navigate(path);
-  };
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
 
   if (displayLoading) {
     return (
@@ -275,8 +209,9 @@ export default function HomePage() {
 
   return (
     <div className={`hp-root ${entered ? "hp-entered" : ""}`} style={{ height: "100%" }}>
-      <HomeTipsModal
+      <PageTipsModal
         open={showTips}
+        slides={PAGE_TIPS[TIPS_PAGE_KEY]}
         onDone={handleTipsDone}
         onLinkClick={handleTipsLinkClick}
       />

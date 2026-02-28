@@ -1,35 +1,16 @@
-// One-time onboarding tips for the home page. Shown only on first login (per user, any device).
+/**
+ * One-time tips modal for any page. Slides: title, description, next (or done on last).
+ * Optional link on a slide; onLinkClick can navigate and close.
+ */
 import { useState } from "react";
 import { modalOverlay, modalContent } from "../styles/shared.js";
 
-const HOME_TIPS_SLIDES = [
-  {
-    title: "مرحبا",
-    paragraph:
-      "أهلاً بك في مدير شبكتك. سنعرض لك نبذة سريعة عن الصفحة الرئيسية لتساعدك على البدء.",
-    next: true,
-  },
-  {
-    title: "لوحة التحكم",
-    paragraph:
-      "من هنا يمكنك متابعة إحصائيات المشتركين، الموزعين، الخطوط، الباقات، الموظفين والمالية. اضغط على أي بطاقة للانتقال إلى الصفحة المختصة.",
-    next: true,
-  },
-  {
-    title: "ابدأ الآن",
-    paragraph:
-      "يمكنك استكشاف الأقسام من القائمة السفلية أو من البطاقات أعلاه. للإعدادات والنسخ الاحتياطي استخدم صفحة الإعدادات.",
-    link: { text: "الإعدادات", href: "/settings" },
-    done: true,
-  },
-];
-
-export default function HomeTipsModal({ open, onDone, onLinkClick }) {
+export default function PageTipsModal({ open, slides = [], onDone, onLinkClick }) {
   const [step, setStep] = useState(0);
-  if (!open) return null;
+  if (!open || !slides.length) return null;
 
-  const slide = HOME_TIPS_SLIDES[step];
-  const isLast = step === HOME_TIPS_SLIDES.length - 1;
+  const slide = slides[step];
+  const isLast = step === slides.length - 1;
 
   const handleNext = () => {
     if (isLast) {
@@ -47,12 +28,14 @@ export default function HomeTipsModal({ open, onDone, onLinkClick }) {
     }
   };
 
+  const description = slide?.description ?? slide?.paragraph ?? "";
+
   return (
     <div
       style={modalOverlay}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="tips-title"
+      aria-labelledby="page-tips-title"
     >
       <div
         style={{
@@ -63,7 +46,7 @@ export default function HomeTipsModal({ open, onDone, onLinkClick }) {
         onClick={(e) => e.stopPropagation()}
       >
         <h2
-          id="tips-title"
+          id="page-tips-title"
           style={{
             fontSize: 22,
             fontWeight: 800,
@@ -83,7 +66,7 @@ export default function HomeTipsModal({ open, onDone, onLinkClick }) {
             textAlign: "right",
           }}
         >
-          {slide?.paragraph}
+          {description}
         </p>
 
         {slide?.link && (
@@ -103,14 +86,7 @@ export default function HomeTipsModal({ open, onDone, onLinkClick }) {
           </div>
         )}
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-start",
-            gap: 10,
-            flexWrap: "wrap",
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "flex-start", gap: 10, flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={handleNext}
@@ -129,27 +105,22 @@ export default function HomeTipsModal({ open, onDone, onLinkClick }) {
           </button>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 6,
-            marginTop: 16,
-            justifyContent: "center",
-          }}
-        >
-          {HOME_TIPS_SLIDES.map((_, i) => (
-            <span
-              key={i}
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: i === step ? "var(--app-primary, #6366f1)" : "var(--app-border)",
-              }}
-              aria-hidden
-            />
-          ))}
-        </div>
+        {slides.length > 1 && (
+          <div style={{ display: "flex", gap: 6, marginTop: 16, justifyContent: "center" }}>
+            {slides.map((_, i) => (
+              <span
+                key={i}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: i === step ? "var(--app-primary, #6366f1)" : "var(--app-border)",
+                }}
+                aria-hidden
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

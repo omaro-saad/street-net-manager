@@ -18,6 +18,9 @@ import {
   apiFinancePut,
 } from "../lib/api.js";
 import { safeArray, safeObj, nowMs, genId } from "../utils/helpers.js";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
 import { theme } from "../theme.js";
 import { Modal, Field } from "../components/shared/index.js";
 import {
@@ -169,9 +172,12 @@ async function addToAutoInvoices(finance, row) {
   await finance.set("autoInvoices", next);
 }
 
+const TIPS_PAGE_KEY = "employee";
+
 export default function EmployeesPage() {
   const { data, setData, gate } = useData();
   const { token } = useAuth();
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
 
   const useEmployeesApi = isApiMode() && !!token;
 
@@ -847,6 +853,7 @@ export default function EmployeesPage() {
 
   return (
     <div style={pageWrap}>
+      <PageTipsModal open={showTips} slides={PAGE_TIPS[TIPS_PAGE_KEY]} onDone={handleTipsDone} onLinkClick={handleTipsLinkClick} />
       <LoadingOverlay visible={actionLoading} />
       {!canWriteEmployee && <ReadOnlyBanner />}
       <div style={topRow}>

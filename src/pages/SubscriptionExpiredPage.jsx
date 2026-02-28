@@ -1,14 +1,15 @@
 // Shown when subscription is expired. User cannot access any app page; only allowed navigation is to Login.
+import { useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
 import { ROUTES } from "../config/routes.js";
 import { theme } from "../theme.js";
-import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "../lib/api.js";
+import { SUPPORT_EMAIL, SUPPORT_MAILTO, SUPPORT_WHATSAPP_URL } from "../lib/api.js";
 import { btnPrimary, btnOutline } from "../styles/shared.js";
 
-const SUBSCRIPTION_EXPIRED_FLAG = "subscription_expired_shown";
+import { PLAN_LABELS, DURATION_LABELS } from "../constants/plans.js";
 
-const PLAN_LABELS = { basic: "أساسي", plus: "بلس", pro: "برو" };
-const DURATION_LABELS = { monthly: "شهري", "3months": "٣ أشهر", yearly: "سنوي" };
+const SUBSCRIPTION_EXPIRED_FLAG = "subscription_expired_shown";
 
 const iconSize = 22;
 const ICON_USER = (
@@ -108,15 +109,45 @@ const buttonRow = {
   width: "100%",
 };
 
-export default function SubscriptionExpiredPage() {
+const alertBox = {
+  padding: 16,
+  borderRadius: theme.borderRadius,
+  background: theme.surfaceAlt,
+  border: `2px solid ${theme.error}`,
+  color: theme.text,
+  fontSize: 15,
+  lineHeight: 1.6,
+  marginBottom: 8,
+};
+
+/** Only page for expired users. payload can come from prop (when AuthGate shows before navigate) or location.state. */
+export default function SubscriptionExpiredPage({ payload: payloadProp }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const payload = location.state?.subscriptionExpired ?? null;
+  const { clearSessionForExpired } = useAuth();
+  const payload = payloadProp ?? location.state?.subscriptionExpired ?? null;
+  const fromLogin = location.state?.fromLogin === true;
   const user = payload?.user ?? null;
   const org = payload?.org ?? null;
   const subscription = payload?.subscription ?? null;
 
+  // Ensure expired flag is set so AuthGate blocks navigation to app routes
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SUBSCRIPTION_EXPIRED_FLAG, "1");
+    } catch {}
+  }, []);
+
+  // If user somehow navigates to any route other than this page or Login, force back to Subscription Expired (expired user cannot open app)
+  useEffect(() => {
+    const path = location.pathname || "";
+    if (path !== ROUTES.SUBSCRIPTION_EXPIRED && path !== ROUTES.LOGIN) {
+      navigate(ROUTES.SUBSCRIPTION_EXPIRED, { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
   const goToLogin = () => {
+    clearSessionForExpired();
     try {
       sessionStorage.removeItem(SUBSCRIPTION_EXPIRED_FLAG);
     } catch {}
@@ -126,6 +157,20 @@ export default function SubscriptionExpiredPage() {
   return (
     <div style={pageRoot}>
       <div style={wrap}>
+        {/* Clear on-page message so the user sees the error instead of only console */}
+        <div style={alertBox}>
+          <p style={{ margin: 0, fontWeight: 700, color: theme.error }}>
+            {fromLogin
+              ? "لم يتم تسجيل الدخول — انتهى اشتراك هذا الحساب"
+              : "انتهى الاشتراك — تم تسجيل خروجك من التطبيق"}
+          </p>
+          <p style={{ margin: "8px 0 0 0", fontSize: 14, color: theme.text }}>
+            {fromLogin
+              ? "لا يمكنك الدخول إلى التطبيق بهذا الحساب حتى يتم تجديد الاشتراك. جميع بياناتك محفوظة. يرجى التواصل مع الدعم للتجديد."
+              : "لا يمكنك استخدام التطبيق أو تنفيذ أي عملية حتى يتم تجديد الاشتراك. جميع بياناتك محفوظة. يرجى التواصل مع الدعم للتجديد."}
+          </p>
+        </div>
+
         <div style={titleBox}>
           <h1 style={{ ...title, color: theme.error, marginBottom: 4 }}>انتهى الاشتراك</h1>
           <p style={{ fontSize: 14, color: theme.textMuted, margin: 0 }}>
@@ -194,7 +239,7 @@ export default function SubscriptionExpiredPage() {
             العودة إلى تسجيل الدخول
           </button>
           <a
-            href={SUPPORT_MAILTO}
+            href={SUPPORT_WHATSAPP_URL}
             style={{
               ...btnOutline,
               width: "100%",

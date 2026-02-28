@@ -37,6 +37,18 @@ export function addDurationDays(startDate, days) {
 }
 
 /**
+ * Time remaining until endsAt as integer (days). null if no endsAt, 0 if expired.
+ */
+export function getTimeRemainingDays(endsAt) {
+  if (!endsAt) return null;
+  const end = new Date(endsAt);
+  const now = new Date();
+  const ms = end - now;
+  const days = Math.floor(ms / MS_PER_DAY);
+  return days <= 0 ? 0 : days;
+}
+
+/**
  * Check if subscription is expired: status not active OR time remaining <= 0.
  * When time remaining reaches 0 (endsAt <= now), subscription is expired — no access, redirect to Subscription Expired page, block all API.
  * 1 day = 24 hours; so "30 days" at start = 30 full days remaining until endsAt.

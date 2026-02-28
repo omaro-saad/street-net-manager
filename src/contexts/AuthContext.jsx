@@ -2,10 +2,17 @@
 // Login via backend only (VITE_API_URL). Plan, limits, subscription from DB (GET /api/auth/me).
 // Session persisted in localStorage so user can open the app directly when returning.
 import React, { createContext, useCallback, useContext, useMemo, useState, useEffect } from "react";
-import { isApiMode, apiLogin, apiMe } from "../lib/api.js";
+import { isApiMode, apiLogin, apiMe, setSubscriptionExpiredHandler } from "../lib/api.js";
 import { getEnabledModulesForPlan } from "../lib/plans.js";
 
 const AUTH_STORAGE_KEY = "al_salam_auth";
+const SUBSCRIPTION_EXPIRED_FLAG = "subscription_expired_shown";
+
+function clearExpiredFlag() {
+  try {
+    if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(SUBSCRIPTION_EXPIRED_FLAG);
+  } catch {}
+}
 
 function readStoredAuth() {
   try {
@@ -54,16 +61,19 @@ export function AuthProvider({ children }) {
           setToken(null);
           setCurrentUser(null);
           setMe(null);
-          if (meRes.code === "subscription_expired" && (meRes.user || meRes.subscription)) {
+          // Any 403 from /me is subscription-related (no org/sub or expired); show Subscription Expired page
+          const isExpired = meRes.code === "subscription_expired" || meRes.status === 403;
+          if (isExpired) {
             setSubscriptionExpiredPayload({
-              user: meRes.user,
-              org: meRes.org,
-              subscription: meRes.subscription,
+              user: meRes.user ?? null,
+              org: meRes.org ?? null,
+              subscription: meRes.subscription ?? null,
             });
           }
           setIsReady(true);
           return;
         }
+        clearExpiredFlag();
         setToken(stored.token);
         setCurrentUser(meRes.user || stored.user || null);
         setMe({
@@ -85,7 +95,33 @@ export function AuthProvider({ children }) {
       });
   }, []);
 
+  // When any API call returns 403 subscription_expired (e.g. create/update/delete), clear session and show Subscription Expired page
+  useEffect(() => {
+    setSubscriptionExpiredHandler((payload) => {
+      writeStoredAuth(null);
+      setToken(null);
+      setCurrentUser(null);
+      setMe(null);
+      setSubscriptionExpiredPayload(payload || { user: null, org: null, subscription: null });
+    });
+    return () => setSubscriptionExpiredHandler(null);
+  }, []);
+
   const clearSubscriptionExpiredPayload = useCallback(() => setSubscriptionExpiredPayload(null), []);
+
+  /** Clear stored auth (localStorage). Use when expired user clicks "Back to login" so the app cannot restore an invalid session. */
+  const clearStoredAuth = useCallback(() => {
+    writeStoredAuth(null);
+  }, []);
+
+  /** Clear stored + in-memory session. Use when expired user clicks "Back to login" so they land on Login page, not the app. */
+  const clearSessionForExpired = useCallback(() => {
+    writeStoredAuth(null);
+    setToken(null);
+    setCurrentUser(null);
+    setMe(null);
+    setSubscriptionExpiredPayload(null);
+  }, []);
 
   const login = useCallback(async (username, password) => {
     const u = String(username ?? "").trim();
@@ -105,38 +141,48 @@ export function AuthProvider({ children }) {
         res.status === 403 ||
         (res.user != null || res.subscription != null);
       if (isExpired) {
+        const payload = {
+          user: res.user ?? null,
+          org: res.org ?? null,
+          subscription: res.subscription ?? null,
+        };
+        setSubscriptionExpiredPayload(payload);
         return {
           ok: false,
           error: res.error,
           code: "subscription_expired",
           status: res.status,
-          subscriptionExpired: {
-            user: res.user ?? null,
-            org: res.org ?? null,
-            subscription: res.subscription ?? null,
-          },
+          subscriptionExpired: payload,
         };
       }
       return { ok: false, error: res.error, status: res.status };
     }
-    setToken(res.token);
-    setCurrentUser(res.user);
-    writeStoredAuth(res.token, res.user);
     const meRes = await apiMe(res.token);
     if (!meRes.ok) {
       setToken(null);
       setCurrentUser(null);
       writeStoredAuth(null);
-      if (meRes.code === "subscription_expired") {
+      const isExpiredMe = meRes.code === "subscription_expired" || meRes.status === 403;
+      if (isExpiredMe) {
+        const payload = {
+          user: meRes.user ?? null,
+          org: meRes.org ?? null,
+          subscription: meRes.subscription ?? null,
+        };
+        setSubscriptionExpiredPayload(payload);
         return {
           ok: false,
           error: meRes.error || "فشل جلب بيانات الاشتراك.",
           code: "subscription_expired",
-          subscriptionExpired: { user: meRes.user, org: meRes.org, subscription: meRes.subscription },
+          subscriptionExpired: payload,
         };
       }
       return { ok: false, error: meRes.error || "فشل جلب بيانات الاشتراك." };
     }
+    clearExpiredFlag();
+    setToken(res.token);
+    setCurrentUser(res.user);
+    writeStoredAuth(res.token, res.user);
     setMe({
       plan: meRes.subscription?.plan || "basic",
       limits: meRes.limits,
@@ -205,26 +251,45 @@ export function AuthProvider({ children }) {
     });
   }, [isSubscriptionExpired, me, currentUser]);
 
+  // Revalidate session: call /me and if 403 clear auth and set subscription-expired payload. Used on visibility and before showing app.
+  const revalidateSession = useCallback(() => {
+    if (!isApiMode() || !token) return Promise.resolve({ ok: true });
+    return apiMe(token).then((meRes) => {
+      const isExpired = !meRes.ok && (meRes.code === "subscription_expired" || meRes.status === 403);
+      if (isExpired) {
+        writeStoredAuth(null);
+        setToken(null);
+        setCurrentUser(null);
+        setMe(null);
+        setSubscriptionExpiredPayload({
+          user: meRes.user ?? null,
+          org: meRes.org ?? null,
+          subscription: meRes.subscription ?? null,
+        });
+        return { ok: false };
+      }
+      return { ok: true };
+    });
+  }, [token]);
+
+  // When tab/window becomes visible, re-check subscription so we kick expired users on return to app
+  useEffect(() => {
+    if (!isApiMode() || !token || typeof document === "undefined") return;
+    const onVisible = () => {
+      revalidateSession();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [token, revalidateSession]);
+
   // Hourly subscription check: if expired, clear session and set payload so AuthGate redirects to Subscription Expired
   useEffect(() => {
     if (!isApiMode() || !token || !currentUser) return;
     const interval = setInterval(() => {
-      apiMe(token).then((meRes) => {
-        if (!meRes.ok && meRes.code === "subscription_expired" && (meRes.user || meRes.subscription)) {
-          writeStoredAuth(null);
-          setToken(null);
-          setCurrentUser(null);
-          setMe(null);
-          setSubscriptionExpiredPayload({
-            user: meRes.user ?? null,
-            org: meRes.org ?? null,
-            subscription: meRes.subscription ?? null,
-          });
-        }
-      });
+      revalidateSession();
     }, 60 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [token, currentUser]);
+  }, [token, currentUser, revalidateSession]);
 
   // When me is not loaded yet (e.g. token just set before apiMe returns), use empty list so we don't call plan-restricted APIs (avoids 403).
   // Once me is set, use server allowedModules or derive from plan.
@@ -306,7 +371,10 @@ export function AuthProvider({ children }) {
       isApiMode: isApiMode(),
       subscriptionExpiredPayload,
       clearSubscriptionExpiredPayload,
+      clearStoredAuth,
+      clearSessionForExpired,
       isSubscriptionExpired,
+      revalidateSession,
     }),
     [
       currentUser,
@@ -331,7 +399,10 @@ export function AuthProvider({ children }) {
       getLimit,
       subscriptionExpiredPayload,
       clearSubscriptionExpiredPayload,
+      clearStoredAuth,
+      clearSessionForExpired,
       isSubscriptionExpired,
+      revalidateSession,
     ]
   );
 

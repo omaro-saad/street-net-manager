@@ -1,6 +1,9 @@
 # Backend API — مدير شبكتك
 
-Node.js (Express) backend for secure API and full control. Ready to link a database.
+**Single backend** for the app. Node.js (Express) in this folder; all routes and logic live here.
+
+- **Local:** Run this server with `npm start` or `npm run dev` (see below).
+- **Vercel:** The repo’s `api/index.js` is only the serverless entry; it imports and exports this app. No duplicate server.
 
 ## Run
 
@@ -74,8 +77,6 @@ Currently the store is **in-memory** (`server/db/store.js`). To use a real DB:
    - Use connection string from `.env` (e.g. `DATABASE_URL`).
    - Tables: one per entity (subscribers, distributors, lines, packages, employees); finance/inventory/maps as JSON columns or separate tables.
 
-3. **Auth in DB**:
-   - In `server/db/auth.js`, replace in-memory user lookup with a DB query (e.g. `users` table with `id`, `username`, `passwordHash`).
-   - Store password hashes with bcrypt (add `bcrypt` and hash on register, compare on login).
+3. **Auth**: User and subscription data come from `server/db/accounts-loader.js` (Supabase `accounts-db.js` when configured, or in-memory `accounts.js`). No separate auth.js; login uses accounts and subscriptions tables.
 
 After the DB layer is in place, the existing routes and middleware stay the same; only the `server/db/*` imports change.

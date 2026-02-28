@@ -1,6 +1,8 @@
 /**
  * Centralized app initialization: load all required data for all modules after login.
  * Used by DataProvider when token is available (API mode). SplashScreen stays until this completes.
+ * If the user is expired, any API call returns 403 with code "subscription_expired"; the global
+ * apiFetch handler clears auth and sets subscriptionExpiredPayload, so AuthGate redirects to Subscription Expired page.
  */
 import {
   apiSubscribersList,
@@ -12,13 +14,7 @@ import {
   apiFinanceGet,
   apiSettingsGet,
 } from "./api.js";
-
-function safeArray(x) {
-  return Array.isArray(x) ? x : [];
-}
-function safeObj(x) {
-  return x && typeof x === "object" && !Array.isArray(x) ? x : {};
-}
+import { safeArray, safeObj } from "../utils/helpers.js";
 
 /**
  * Whether the user has access to the given module (avoids 403 by not calling the API).

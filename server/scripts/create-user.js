@@ -107,6 +107,16 @@ function addDuration(startDate, duration) {
   return addDurationDays(startDate, days);
 }
 
+/** Generate a unique 9-digit public_id for accounts (100000000–999999999). Retries up to 10 times. */
+async function generateUniquePublicId(supabase) {
+  for (let i = 0; i < 10; i++) {
+    const id = Math.floor(100000000 + Math.random() * 900000000);
+    const { data } = await supabase.from("accounts").select("id").eq("public_id", id).maybeSingle();
+    if (!data) return id;
+  }
+  throw new Error("Could not generate unique public_id");
+}
+
 async function main() {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -155,6 +165,7 @@ async function main() {
 
   const adminPasswordHash = await bcrypt.hash(args.oadminPassword, SALT_ROUNDS);
   const adminResetCodeHash = await bcrypt.hash(args.adminSecretCode, SALT_ROUNDS);
+  const oadminPublicId = await generateUniquePublicId(supabase);
 
   const { error: accErr } = await supabase.from("accounts").insert({
     org_id: orgId,
@@ -163,6 +174,7 @@ async function main() {
     reset_code_hash: adminResetCodeHash,
     role: "oadmin",
     display_name: args.oadminUsername,
+    public_id: oadminPublicId,
   });
 
   if (accErr) {
@@ -174,6 +186,7 @@ async function main() {
   for (const o of args.ousers) {
     const ouserPasswordHash = await bcrypt.hash(o.password, SALT_ROUNDS);
     const ouserResetCodeHash = await bcrypt.hash(o.secretCode, SALT_ROUNDS);
+    const ouserPublicId = await generateUniquePublicId(supabase);
     const { error: ouserErr } = await supabase.from("accounts").insert({
       org_id: orgId,
       username: o.username,
@@ -181,6 +194,7 @@ async function main() {
       reset_code_hash: ouserResetCodeHash,
       role: "ouser",
       display_name: o.username,
+      public_id: ouserPublicId,
     });
     if (ouserErr) {
       console.error("Failed to create Ouser account:", o.username, ouserErr.message);

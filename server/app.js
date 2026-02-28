@@ -3,10 +3,10 @@ import helmet from "helmet";
 import cors from "cors";
 import { config } from "./config.js";
 import { loginLimiter, apiLimiter } from "./middleware/rateLimit.js";
-import { incrementVisits } from "./db/visits-store.js";
 import authRoutes from "./routes/auth.js";
 import apiRoutes from "./routes/api.js";
 import dashboardRoutes from "./routes/dashboard.js";
+import trackingRoutes from "./routes/tracking.js";
 
 const app = express();
 
@@ -54,22 +54,22 @@ app.get("/", (req, res) =>
     health: "GET /health",
   })
 );
-app.get("/health", (req, res) => res.json({ ok: true, service: "street-net-manager-api" }));
-
-// Public: count a visit (called by the main app on load, once per session). Do not count dashboard health checks as visits.
-app.get("/api/track-visit", (req, res) => {
-  incrementVisits();
-  res.status(204).end();
-});
-// Alias for Site API spec: GET /api/visit
-app.get("/api/visit", (req, res) => {
-  incrementVisits();
-  res.status(204).end();
+app.get("/health", (req, res) => {
+  const start = Date.now();
+  const responseTimeMs = Date.now() - start;
+  return res.json({
+    ok: true,
+    serverUp: true,
+    statusText: "ok",
+    responseTimeMs,
+    lastCheckAt: new Date().toISOString(),
+  });
 });
 
 app.use("/api", apiLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api", trackingRoutes);
 app.use("/api", apiRoutes);
 app.use((req, res) => {
   const path = `${req.method} ${req.originalUrl || req.url}`;

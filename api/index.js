@@ -1,6 +1,6 @@
 /**
- * Vercel serverless entry: all /api, /health, /favicon.ico requests are rewritten here.
- * The Express app handles routing; no need to call listen().
+ * Vercel serverless entry only. All /api, /health, /favicon.ico are rewritten here.
+ * The real backend is server/app.js — this file just exports it (no duplicate server).
  */
 import app from "../server/app.js";
 

@@ -23,3 +23,32 @@ export const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+const oneMinute = 60 * 1000;
+
+/** Tracking: 60/min per IP for track-visit and track-event. */
+export const trackVisitLimiter = rateLimit({
+  windowMs: oneMinute,
+  limit: 60,
+  message: { ok: false, error: "Too many requests" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/** Heartbeat: 120/min per IP (one every 60s leaves headroom). */
+export const heartbeatLimiter = rateLimit({
+  windowMs: oneMinute,
+  limit: 120,
+  message: { ok: false, error: "Too many requests" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/** Track-event: 120/min per IP. */
+export const trackEventLimiter = rateLimit({
+  windowMs: oneMinute,
+  limit: 120,
+  message: { ok: false, error: "Too many requests" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

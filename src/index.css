@@ -37,6 +37,19 @@ body {
   line-height: 1.5;
 }
 
+/* Light theme: inputs use theme text and surface so they are visible */
+.app-inner input,
+.app-inner select,
+.app-inner textarea {
+  color: var(--app-text) !important;
+  background-color: var(--app-surface-alt) !important;
+  border-color: var(--app-border) !important;
+}
+.app-inner input::placeholder,
+.app-inner textarea::placeholder {
+  color: var(--app-text-light);
+}
+
 .app-wrap {
   background-color: var(--app-bg);
   color: var(--app-text);

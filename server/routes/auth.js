@@ -8,7 +8,7 @@ import { config } from "../config.js";
 import { accounts } from "../db/accounts-loader.js";
 import { getTipsSeen, markTipsSeen } from "../db/tips-loader.js";
 import { requireAuth, requirePlan } from "../middleware/auth.js";
-import { isSubscriptionExpired } from "../lib/subscription.js";
+import { isSubscriptionExpired, getTimeRemainingDays } from "../lib/subscription.js";
 import { loginLimiter } from "../middleware/rateLimit.js";
 import { getUsage } from "../db/usage.js";
 import { getEnabledModulesForPlan } from "../config/plans.js";
@@ -52,6 +52,7 @@ router.post("/login", loginLimiter, express.json(), async (req, res) => {
         status: subscription.status,
         startedAt: subscription.startedAt,
         endsAt: subscription.endsAt,
+        timeRemainingDays: getTimeRemainingDays(subscription.endsAt),
       },
     });
   }
@@ -75,6 +76,7 @@ router.post("/login", loginLimiter, express.json(), async (req, res) => {
       orgId: user.orgId,
       role: user.role,
       displayName: user.displayName,
+      publicId: user.publicId ?? null,
     },
   });
 });
@@ -101,6 +103,7 @@ router.get("/me", requireAuth, requirePlan, async (req, res) => {
             status: req.subscription.status,
             startedAt: req.subscription.startedAt,
             endsAt: req.subscription.endsAt,
+            timeRemainingDays: getTimeRemainingDays(req.subscription.endsAt),
           }
         : null,
       role: req.role,
@@ -137,6 +140,7 @@ router.patch("/profile/username", express.json(), requireAuth, requirePlan, asyn
       orgId: req.user.orgId,
       role: req.user.role,
       displayName: req.user.displayName,
+      publicId: req.user.publicId ?? null,
     },
   });
 });
@@ -236,25 +240,28 @@ router.patch("/ousers/:id/permissions", express.json(), requireAuth, requirePlan
   return res.json({ ok: true, permissions: filtered });
 });
 
-// ——— Tips (onboarding): show once per user per page; persisted per account (any device). ———
+// ——— Tips (onboarding): linked to first login. Show only until user dismisses tips once; then never again. ———
 // If user_tips table is missing (migration not run), degrade gracefully: return empty tips so app does not 500.
 router.get("/tips", requireAuth, requirePlan, async (req, res) => {
   try {
-    const seen = await getTipsSeen(req.user.id);
-    return res.json({ ok: true, tips: seen });
+    const seen = await getTipsSeen(req.user.publicId ?? null);
+    const onboardingDone = !!seen.onboarding_done;
+    return res.json({ ok: true, tips: seen, onboardingDone, userPublicId: req.user.publicId ?? null });
   } catch (e) {
     console.warn("[auth/tips] getTipsSeen failed (e.g. user_tips table missing):", e?.message);
-    return res.json({ ok: true, tips: {} });
+    return res.json({ ok: true, tips: {}, onboardingDone: true });
   }
 });
 
+// Mark tip as seen for a page; also set onboarding_done. Keyed by public_id.
 router.post("/tips/seen", express.json(), requireAuth, requirePlan, async (req, res) => {
   const pageKey = String(req.body?.pageKey ?? "").trim();
   if (!pageKey) {
     return res.status(400).json({ ok: false, error: "pageKey مطلوب." });
   }
   try {
-    await markTipsSeen(req.user.id, pageKey);
+    await markTipsSeen(req.user.publicId ?? null, pageKey, req.user.id);
+    await markTipsSeen(req.user.publicId ?? null, "onboarding_done", req.user.id);
     return res.json({ ok: true });
   } catch (e) {
     console.warn("[auth/tips] markTipsSeen failed (e.g. user_tips table missing):", e?.message);

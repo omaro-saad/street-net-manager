@@ -23,6 +23,11 @@ function generateRandomPassword() {
   return s;
 }
 
+/** Generate a random 9-digit integer in [100000000, 999999999] for in-memory publicId. */
+function generateUniquePublicIdInMemory() {
+  return Math.floor(100000000 + Math.random() * 900000000);
+}
+
 // ——— In-memory state ———
 const orgs = new Map();
 const users = new Map(); // key: username (lowercase)
@@ -97,7 +102,13 @@ export function listOusersByOrgId(orgId) {
   const list = [];
   for (const u of users.values()) {
     if (u.orgId === orgId && u.role === "ouser") {
-      list.push({ id: u.id, username: u.username, displayName: u.displayName ?? u.username, role: u.role });
+      list.push({
+        id: u.id,
+        username: u.username,
+        displayName: u.displayName ?? u.username,
+        role: u.role,
+        publicId: u.publicId ?? null,
+      });
     }
   }
   return list.sort((a, b) => String(a.username).localeCompare(b.username));
@@ -158,6 +169,7 @@ export async function createUser(username, plainPassword, { orgId, role = "ouser
   const resetCode = generateSixDigitCode();
   const resetCodeHash = await bcrypt.hash(resetCode, SALT_ROUNDS);
   const id = `user-${key}-${Date.now()}`;
+  const publicId = generateUniquePublicIdInMemory();
   const user = {
     id,
     orgId,
@@ -166,11 +178,19 @@ export async function createUser(username, plainPassword, { orgId, role = "ouser
     resetCodeHash,
     role: role || "ouser",
     displayName: displayName || u,
+    publicId,
   };
   users.set(key, user);
   return {
     ok: true,
-    user: { id: user.id, username: user.username, orgId: user.orgId, role: user.role, displayName: user.displayName },
+    user: {
+      id: user.id,
+      username: user.username,
+      orgId: user.orgId,
+      role: user.role,
+      displayName: user.displayName,
+      publicId: user.publicId,
+    },
     resetCode,
   };
 }

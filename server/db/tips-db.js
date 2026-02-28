@@ -16,15 +16,16 @@ function getSupabase() {
 }
 
 /**
- * Get which page keys the user has already seen tips for.
- * @param {string} accountId - account (user) id
- * @returns {Promise<Record<string, boolean>>} e.g. { home: true }
+ * Get which page keys the user has already seen tips for (by public_id).
+ * @param {number} publicId - accounts.public_id (9-digit)
+ * @returns {Promise<Record<string, boolean>>} e.g. { home: true, onboarding_done: true }
  */
-export async function getTipsSeen(accountId) {
+export async function getTipsSeen(publicId) {
+  if (publicId == null) return {};
   const { data, error } = await getSupabase()
     .from("user_tips")
     .select("page_key")
-    .eq("account_id", accountId);
+    .eq("public_id", publicId);
   if (error) throw new Error(error.message);
   const out = {};
   for (const row of data || []) {
@@ -34,18 +35,19 @@ export async function getTipsSeen(accountId) {
 }
 
 /**
- * Mark tips as seen for a page. Idempotent.
- * @param {string} accountId
+ * Mark tips as seen for a page. Idempotent. Uses public_id; accountId required for insert (account_id NOT NULL).
+ * @param {number} publicId - accounts.public_id
  * @param {string} pageKey - e.g. 'home'
+ * @param {string} [accountId] - account id (for insert when table has account_id NOT NULL)
  */
-export async function markTipsSeen(accountId, pageKey) {
+export async function markTipsSeen(publicId, pageKey, accountId) {
+  if (publicId == null) return;
   const key = String(pageKey ?? "").trim();
   if (!key) throw new Error("page_key مطلوب.");
+  const row = { public_id: publicId, page_key: key, seen_at: new Date().toISOString() };
+  if (accountId) row.account_id = accountId;
   const { error } = await getSupabase()
     .from("user_tips")
-    .upsert(
-      { account_id: accountId, page_key: key, seen_at: new Date().toISOString() },
-      { onConflict: "account_id,page_key" }
-    );
+    .upsert(row, { onConflict: "public_id,page_key" });
   if (error) throw new Error(error.message);
 }

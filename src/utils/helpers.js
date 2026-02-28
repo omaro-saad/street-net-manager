@@ -126,3 +126,15 @@ export function isExpired(sub) {
   if (!Number.isFinite(num) || num <= 0) return false;
   return num < Date.now();
 }
+
+/**
+ * Time remaining until endsAt as integer (days). Returns null if no endsAt, 0 or negative if expired.
+ */
+export function getTimeRemainingDays(endsAt) {
+  if (!endsAt) return null;
+  const end = new Date(endsAt);
+  const now = new Date();
+  const ms = end - now;
+  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+  return days <= 0 ? 0 : days;
+}

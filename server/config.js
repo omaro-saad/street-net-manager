@@ -16,14 +16,19 @@ if (nodeEnv === "production" && jwtSecret === defaultJwtSecret) {
 
 /** Comma-separated origins for CORS, or empty to allow same-origin only. Example: https://app.example.com,https://admin.example.com */
 const allowedOriginsRaw = process.env.CORS_ALLOWED_ORIGINS || "";
-const allowedOrigins = allowedOriginsRaw
+const fromList = allowedOriginsRaw
   ? allowedOriginsRaw.split(",").map((o) => o.trim()).filter(Boolean)
   : [];
+/** Dashboard app origin (e.g. https://dashboard.example.com). Added to CORS so dashboard can call /api/dashboard/*. */
+const dashboardOrigin = (process.env.DASHBOARD_ORIGIN || "").trim();
+const allowedOrigins = dashboardOrigin
+  ? [...fromList, dashboardOrigin]
+  : fromList;
 
 export const config = {
-  port: Number(process.env.PORT) || 3000,
+  port: Number(process.env.PORT) || 4000,
   jwtSecret,
   nodeEnv,
-  /** If empty, CORS will allow same-origin only in production; in dev, allow common dev origins. */
+  /** CORS: these origins are allowed. Includes DASHBOARD_ORIGIN when set so dashboard can call the API. */
   allowedOrigins,
 };

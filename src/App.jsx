@@ -1,6 +1,6 @@
 // src/App.jsx
 import { Suspense, lazy, useEffect } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import BottomNav from "./components/BottomNav";
 import LoadingLogo from "./components/LoadingLogo";
 import AuthGate from "./components/AuthGate";
@@ -10,7 +10,6 @@ import { useData } from "./DataContext.jsx";
 
 import HomePage from "./pages/HomePage";
 import SettingsPage from "./pages/SettingsPage";
-import SubscriptionExpiredPage from "./pages/SubscriptionExpiredPage";
 
 const SubscribersPage = lazy(() => import("./pages/SubscribersPage"));
 const DistributorsPage = lazy(() => import("./pages/DistributorsPage"));
@@ -84,7 +83,6 @@ function AppInner() {
         }}
       >
         <Routes>
-          <Route path={ROUTES.SUBSCRIPTION_EXPIRED} element={<SubscriptionExpiredPage />} />
           <Route path={ROUTES.HOME} element={<HomePage />} />
           <Route path={ROUTES.SUBSCRIBERS} element={<PlanGate moduleKey="subscribers"><Suspense fallback={<PageFallback />}><SubscribersPage /></Suspense></PlanGate>} />
           <Route path={ROUTES.DISTRIBUTORS} element={<PlanGate moduleKey="distributors"><Suspense fallback={<PageFallback />}><DistributorsPage /></Suspense></PlanGate>} />
@@ -95,6 +93,8 @@ function AppInner() {
           <Route path={ROUTES.EMPLOYEE} element={<PlanGate moduleKey="employee"><Suspense fallback={<PageFallback />}><EmployeesPage /></Suspense></PlanGate>} />
           <Route path={ROUTES.FINANCE} element={<PlanGate moduleKey="finance"><Suspense fallback={<PageFallback />}><FinancePage /></Suspense></PlanGate>} />
           <Route path={ROUTES.SETTINGS} element={<PlanGate moduleKey="settings"><SettingsPage /></PlanGate>} />
+          {/* Subscription Expired is only shown by AuthGate (no app layout/nav). Catch-all sends any other path to HOME. */}
+          <Route path="*" element={<Navigate to={ROUTES.HOME} replace />} />
         </Routes>
       </div>
 

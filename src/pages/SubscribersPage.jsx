@@ -38,6 +38,9 @@ import {
 import { normalizeLineRow } from "../utils/lineShape.js";
 import { theme } from "../theme.js";
 import { useResponsive } from "../hooks/useResponsive.js";
+import { usePageTips } from "../hooks/usePageTips.js";
+import PageTipsModal from "../components/PageTipsModal.jsx";
+import { PAGE_TIPS } from "../constants/pageTips.js";
 import {
   pageWrap,
   input,
@@ -185,9 +188,12 @@ function calcExpiresAt(startAtMs, svc) {
   return addDaysLocal(base, n);
 }
 
+const TIPS_PAGE_KEY = "subscribers";
+
 export default function SubscribersPage() {
   const ctx = useData();
   const { isAtLimit, canWrite, token } = useAuth();
+  const { showTips, handleTipsDone, handleTipsLinkClick } = usePageTips(TIPS_PAGE_KEY);
   const { showPlanLimitAlert, showReadOnlyAlert, showValidationAlert, showErrorAlert, showConfirmAlert } = useAlert();
   const subscribersAtLimit = isAtLimit("subscribers", "subscribers");
   const canWriteSubscribers = canWrite("subscribers");
@@ -1000,6 +1006,7 @@ export default function SubscribersPage() {
 
   return (
     <div style={pageWrapR}>
+      <PageTipsModal open={showTips} slides={PAGE_TIPS[TIPS_PAGE_KEY]} onDone={handleTipsDone} onLinkClick={handleTipsLinkClick} />
       <LoadingOverlay visible={actionLoading} />
       {!canWriteSubscribers && <ReadOnlyBanner />}
       <div style={topRowR}>
